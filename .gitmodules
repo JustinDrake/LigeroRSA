@@ -1,0 +1,13 @@
+[submodule "depends/easyloggingpp"]
+	path = depends/easyloggingpp
+	url = https://github.com/zuhd-org/easyloggingpp.git
+[submodule "depends/NFLlib"]
+	path = depends/NFLlib
+	url = https://github.com/SuperHex/NFLlib.git
+	branch = move-to-heap
+[submodule "depends/exrandom"]
+	path = depends/exrandom
+	url = https://github.com/cartazio/exrandom-mirror.git
+[submodule "depends/cppzmq"]
+	path = depends/cppzmq
+	url = https://github.com/zeromq/cppzmq.git
