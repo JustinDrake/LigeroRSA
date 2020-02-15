@@ -1,0 +1,19 @@
+AWS Usage Report By Region:
+location, EC2 region code, # instances
+EU (Stockholm),eu-north-1,0
+Asia Pacific (Seoul),ap-northeast-2,0
+Asia Pacific (Singapore),ap-southeast-1,0
+Asia Pacific (Sydney),ap-southeast-2,0
+Asia Pacific (Tokyo),ap-northeast-1,0
+Canada (Central),ca-central-1,0
+EU (Frankfurt),eu-central-1,0
+EU (Ireland),eu-west-1,0
+EU (London),eu-west-2,0
+EU (Paris),eu-west-3,0
+Asia Pacific (Mumbai),ap-south-1,0
+South America (Sao Paulo),sa-east-1,0
+US East (N. Virginia),us-east-1,0
+US East (Ohio),us-east-2,0
+US West (N. California),us-west-1,0
+US West (Oregon),us-west-2,0
+Aggregate,aggregate,0

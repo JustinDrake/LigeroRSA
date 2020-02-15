@@ -1,0 +1,47 @@
+# source this file using 2 arguments, the user key and the tag
+
+if [ $# -ne 2 ]; then
+    echo "USAGE: source config <key> <tag>"
+else
+    # AWS Access
+    EC2_KEY_ID=$1
+
+    # Simulation params
+    NB_BITS=1024
+    NB_ATTEMPTS=1000
+    N=512
+    M=512
+    CHISTD=3.2
+
+    # Simulation system config
+    COORDINATOR_NB_CONCURRENT_CONNECTIONS=4096
+    INDIVIDUAL_BATCH_SIZE=100
+    PARTY_BINARY="party_full_protocol"
+    COORDINATOR_BINARY="coordinator_full_protocol"
+    BUILD_DIR="../build/src/"
+
+    # This parameter sets the alert message displayed  
+    ALERT_MAIL="AWS Usage Alert"
+
+    # This parameter sets the frequency at which we check the status of the EC2 instances  
+    EC2_STATUS_CHECK_FREQUENCY=10
+
+    # Set a tag for this simulation
+    TAG=$2
+
+    # Export all variables
+    export EC2_KEY_ID
+    export NB_BITS
+    export NB_ATTEMPTS
+    export N
+    export M
+    export CHISTD
+    export COORDINATOR_NB_CONCURRENT_CONNECTIONS=2048
+    export INDIVIDUAL_BATCH_SIZE
+    export PARTY_BINARY
+    export COORDINATOR_BINARY
+    export ALERT_MAIL
+    export EC2_STATUS_CHECK_FREQUENCY
+    export TAG
+    export BUILD_DIR
+fi

@@ -1,0 +1,7 @@
+us-west-2,US West (Oregon),m5.metal,1,ami-0586eddd33e3ea437,sg-088baad6d6bb47084
+us-east-1,US East (N. Virginia),t2.xlarge,1,ami-0ab274625357f51af,sg-02b1025a143de1950
+ca-central-1,Canada (Central),t2.xlarge,1,ami-05bafeb262e9774d2,sg-02d35433165757f72
+us-east-2,US East (Ohio),t2.xlarge,1,ami-0203dc8ddb32c41e9,sg-0279f36c075a2232c
+us-west-1,US West (N. California),t2.xlarge,1,ami-03b57e468e9d9e206,sg-0074a9e8f261c8735
+eu-central-1,EU (Frankfurt),t2.small,256,ami-0e6ed36a039ae1fcc,sg-0084ea880daae165a
+sa-east-1,South America (Sao Paulo),t2.small,256,ami-025bf53a778830207,sg-0feb09ef45545f0c6

@@ -1,0 +1,3 @@
+us-west-2,US West (Oregon),r5.24xlarge,1,ami-0272fb95047cee0c0,sg-088baad6d6bb47084
+us-east-1,US East (N. Virginia),t3.small,5,ami-0f68e3782f447dee4,sg-02b1025a143de1950
+us-east-2,US East (Ohio),t3.small,5,ami-0fa0a559c14111471,sg-0279f36c075a2232c

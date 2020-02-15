@@ -1,0 +1,61 @@
+FROM ubuntu:18.04 AS builder
+
+RUN apt-get update --fix-missing
+
+RUN apt-get install -y build-essential
+RUN apt-get install -y pkg-config
+RUN apt-get install -y libgmp-dev
+RUN apt-get install -y libeigen3-dev
+RUN apt-get install -y wget
+RUN apt-get install -y git
+RUN apt-get install -y libmpfr-dev
+RUN apt-get install -y libsodium-dev
+
+
+# gcc-8
+RUN apt-get install -y gcc-8 g++-8
+# set explicit priorites for gcc 7 and gcc 8 so that gcc 8 appears first in the list
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 700 --slave /usr/bin/g++ g++ /usr/bin/g++-7
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 800 --slave /usr/bin/g++ g++ /usr/bin/g++-8
+
+# Boost
+RUN wget --max-redirect 3 https://dl.bintray.com/boostorg/release/1.69.0/source/boost_1_69_0.tar.gz
+RUN mkdir -p /usr/include/boost && tar zxf boost_1_69_0.tar.gz
+RUN cd boost_1_69_0 && ./bootstrap.sh --prefix=/usr/local && ./b2 --with=all install && echo "/usr/local/lib" >> /etc/ld.so.conf.d/local.conf && ldconfig
+
+# ZeroMQ
+RUN echo "deb https://download.opensuse.org/repositories/network:/messaging:/zeromq:/release-stable/xUbuntu_18.04 ./" >> /etc/apt/sources.list
+RUN wget https://download.opensuse.org/repositories/network:/messaging:/zeromq:/release-stable/xUbuntu_18.04/Release.key -qO- | apt-key add
+RUN apt-get install -y libzmq3-dev
+
+RUN wget -qO- https://github.com/zeromq/cppzmq/archive/v4.3.0.tar.gz | tar xvzf - -C /usr/local/include
+
+# CMake 3.14
+RUN wget --max-redirect 3 https://github.com/Kitware/CMake/releases/download/v3.14.3/cmake-3.14.3-Linux-x86_64.tar.gz
+RUN tar -xzf cmake-3.14.3-Linux-x86_64.tar.gz
+ENV PATH="/cmake-3.14.3-Linux-x86_64/bin:${PATH}"
+
+# Default working directory
+WORKDIR /opt/src
+ADD . ./app
+
+# Build binaries
+RUN cd /opt/src/app/aws_scripts && ./native_build.sh
+
+# Create binary image with a minimum amount of libraries
+FROM ubuntu:18.04
+RUN apt-get update --fix-missing
+RUN apt-get install -y libgmp-dev
+RUN apt-get install -y libmpfr6
+RUN apt-get install -y libsodium23
+RUN apt-get install -y wget
+RUN apt-get install -y gnupg2
+# ZeroMQ
+RUN echo "deb https://download.opensuse.org/repositories/network:/messaging:/zeromq:/release-stable/xUbuntu_18.04 ./" >> /etc/apt/sources.list
+RUN wget https://download.opensuse.org/repositories/network:/messaging:/zeromq:/release-stable/xUbuntu_18.04/Release.key -qO- | apt-key add
+RUN apt-get install -y libzmq3-dev
+
+WORKDIR /root/
+COPY --from=builder /opt/src/app/build/src/party_full_protocol .
+COPY --from=builder /opt/src/app/build/src/coordinator_full_protocol .
+CMD ["./party_full_protocol"]  
