@@ -23,7 +23,7 @@ $ export PATH="/cmake-3.14.3-Linux-x86_64/bin:${PATH}"
 $ git submodule update --init --recursive
 ```
 
-## Building and Running
+## Building
 
 #### Build and Run Tests with CMake 
 
@@ -36,6 +36,9 @@ For Mac OS X, Windows, or Linux users with Docker:
 ```bash
 $ ./scripts/build-binary-docker.sh
 ```
+
+
+## Running
 
 Lets run a computation for 10 parties. First start coordinator.
 
@@ -63,3 +66,25 @@ $ ./scripts/run-party-in-docker.sh
 ```
 
 Once all ten parties connected or timeout for registration passed the protocol will start.
+
+
+## License 
+
+Copyright 2020 Ligero, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+
+This code was developed under a project supported by the VDF Alliance, 
+and particularly the Ethereum Foundation and Protocol Labs, Inc.
