@@ -749,7 +749,8 @@ class EncryptedClient {
                     // This is ONLY for checking the result. We need to remove this part finally.
                     DBG("Participant (" << socketId() <<
                         ") Transmitting the p and q values in the clear for debugging purposes only.");
-                    transport.send(MessageType::P_CLEAR_DEBUG, std::pair{p_shares, q_shares});
+
+                    transport.send(MessageType::MUTHU_ACK, int(1));
                     DBG("Participant (" << socketId() << ") done.");
 
                 }

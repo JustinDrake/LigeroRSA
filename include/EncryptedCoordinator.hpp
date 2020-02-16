@@ -971,63 +971,9 @@ public:
                 transport.broadcast(MessageType::NO_MODULI, ZeroMQCoordinatorTransport::ids);
             }
 
-            // Below we are going to check if our output is a product of two primes
-            // There is no other way to check it than actually computing p and q as we 
-            // cannot possibly factor 2048 bit numbers! 
-
-            using PairOfVec = std::pair<std::vector<mpz_class>, std::vector<mpz_class>>;
-            if (foundModuli) {
-                auto maybe_pq = transport.awaitAggregateVectorInput<PairOfVec>(
-                        MessageType::P_CLEAR_DEBUG,
-                        ZeroMQCoordinatorTransport::ids,
-                        [](const PairOfVec& a, const PairOfVec& b) {
-                         assert(a.first.size() == b.first.size());
-                         assert(a.second.size() == b.second.size());
-
-                         std::vector<mpz_class> fsum(a.first.size());
-                         std::vector<mpz_class> ssum(b.second.size());
-
-                         for (size_t i = 0; i < a.first.size(); ++i) {
-                            fsum[i] = a.first[i] + b.first[i];
-                            ssum[i] = a.second[i] + b.second[i];
-                         }
-                         return std::pair{fsum, ssum};
-                         },
-                         std::pair{std::vector<mpz_class>(candidates.size(), mpz_class(0)),
-                                   std::vector<mpz_class>(candidates.size(), mpz_class(0))}
-                        );
-                
-                if (!maybe_pq) {
-                    LOG(ERROR) << "PQ timed out!";
-                    return std::nullopt;
-                }
-                auto pq = *maybe_pq;
-
-                // sanity check
-                for(size_t i = 0; i < pq.first.size(); ++i)
-                {
-                    assert(boost::multiprecision::miller_rabin_test(MPInt(pq.first[i].get_mpz_t()), 4));
-                    assert(boost::multiprecision::miller_rabin_test(MPInt(pq.second[i].get_mpz_t()), 4));
-                }
-
-                LOG(INFO) << "Prime factorization of the candidates are: ";
-                for (size_t i = 0; i < pq.first.size(); ++i) {
-                    LOG(INFO) << pq.first[i];
-                    LOG(INFO) << pq.second[i];
-                }
-
-                //transport.myTimers.end(2,"Miller Rabin Tests",transport.communicationCost);
-
-                assert(pq.first.size() == candidates.size());
-
-                for(size_t i = 0; i< pq.first.size(); ++i)
-                {
-                    assert(pq.first[i] * pq.second[i] == candidates[i]);
-                }
-                LOG(INFO) << "All candidate moduli checked.";
-                DBG("Done.");
-
-            }
+            // sync
+            transport.awaitAggregateVectorInput<int>(MessageType::MUTHU_ACK, ZeroMQCoordinatorTransport::ids, [](const int& a, const int& b) { return a; }, 0);
+            
             transport.myTimers.end(1,"RSA Ceremony",transport.communicationCost);
         }
         return 0;
