@@ -144,7 +144,7 @@ int main(int argc, char** argv)
 
         bool success = true;
 
-        std::cout << "Modulus idx:" << modulusIdx << std::endl;
+        std::cout << "Generating proof on modulus " << modulusIdx << std::endl;
 
         // Zero-Knowledge
         p_zk = nfl::params<uint64_t>::P[modulusIdx];
@@ -171,7 +171,7 @@ int main(int argc, char** argv)
         }
 
         if (success) {
-            std::cout << "Verified Argument Of Knowledge for Party " << ssocketId << ", modulus " << modulusIdx << std::endl;
+            std::cout << "Verified Party " << ssocketId << " zkproof on modulus " << modulusIdx << std::endl;
             aggregateSuccess++;
         } else std::cout << "!!Argument Of Knowledge Failed for Party " << ssocketId << ", modulus " << modulusIdx << std::endl;
     }

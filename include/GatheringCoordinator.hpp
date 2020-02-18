@@ -125,7 +125,7 @@ namespace ligero
                             std::string ssocketId(ssId.str());
                             std::string proofNb = std::to_string(proofsReceived[socketIndex]);
 
-                            std::cout << filename + stagProof + ssocketId + std::string("_") + proofNb << std::endl;
+                            //std::cout << filename + stagProof + ssocketId + std::string("_") + proofNb << std::endl;
                             sendToFile(argumentOfKnowledge, filename + stagProof + ssocketId + std::string("_") + proofNb);
                         }
 
@@ -138,7 +138,7 @@ namespace ligero
                             std::string ssocketId("test");
                             std::string proofNb = std::to_string(testCount);
 
-                            std::cout << filename + stagProof + ssocketId + std::string("_") + proofNb << std::endl;
+                            //std::cout << filename + stagProof + ssocketId + std::string("_") + proofNb << std::endl;
                             sendToFile(argumentOfKnowledge, filename + stagProof + ssocketId + std::string("_") + proofNb);
                         }
                     }
