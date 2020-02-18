@@ -144,7 +144,7 @@ int main(int argc, char** argv)
 
         bool success = true;
 
-        std::cout << "Generating proof on modulus " << modulusIdx << std::endl;
+        //std::cout << "Generating proof on modulus " << modulusIdx << std::endl;
 
         // Zero-Knowledge
         p_zk = nfl::params<uint64_t>::P[modulusIdx];
