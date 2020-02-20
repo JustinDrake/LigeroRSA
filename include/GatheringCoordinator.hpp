@@ -49,6 +49,8 @@ namespace ligero
                 boost::dynamic_bitset<> hasReceivedInput (nbParties, false);
                 bool complete = false;
 
+                // Tell all parties to send their public data
+                transport.broadcast(MessageType::GATHER_PUBLIC_DATA, ids);
                 do {
                     std::stringstream ssId, ss;
                     auto [socketId, publicData] = transport.awaitNextInputST<PublicData>(MessageType::GATHER_PUBLIC_DATA);

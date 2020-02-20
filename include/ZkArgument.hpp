@@ -995,6 +995,10 @@ namespace ligero {
 
                         // Send Public Data over 
                         if (this->_publicData.modulusIdx == 0) {
+
+                            std::optional<MessageType> msg = _transport.awaitReply();
+                            assert(msg == MessageType::GATHER_PUBLIC_DATA);
+
                             _transport.send(MessageType::GATHER_PUBLIC_DATA, this->_publicData);
                         }
 
