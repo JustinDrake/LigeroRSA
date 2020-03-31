@@ -44,7 +44,7 @@ $ ./scripts/build-binary-docker.sh
 
 ## Running
 
-### Ubuntu 14.04
+### Active Protocol with Ubuntu 14.04
 Lets run an active computation for 10 parties: First start the coordinator.
 
 ```bash
