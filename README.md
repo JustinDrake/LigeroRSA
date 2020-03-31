@@ -19,9 +19,9 @@ tar -xzf cmake-3.14.3-Linux-x86_64.tar.gz
 export PATH="/cmake-3.14.3-Linux-x86_64/bin:${PATH}"
 ```
 3. Coordinator Node Settings
-   a. The Protocol currently uses port 5555 (passive/active) and 5556 (active verification), both ports must be open for TCP traffic on the coordinator's instance.
-   b. For a 1024-party RSA Ceremony, setting stack size to 100 MB (ulimit -s 100000) and number of open files to 10K (ulimit -n 10000) has proven sufficient in testing.
-   c. Hardware requirements: Memory minimum 600 GB, HDD 500 GB.
+   1. The Protocol currently uses port 5555 (passive/active protocol) and 5556 (proof verification), both ports must be open for TCP traffic on the coordinator's instance.
+   2. For a 1024-party RSA Ceremony, setting stack size to 100 MB (ulimit -s 100000) and number of open files to 10K (ulimit -n 10000) has proven sufficient in testing.
+   3. Minimum hardware for 1024-party node: Memory 600 GB, HDD 500 GB.
 
 ## Fetch Dependencies
 ```bash
@@ -77,10 +77,20 @@ Once all ten parties connected or timeout for registration passed the protocol w
 Instructions here are for native Ubuntu runs.
 
 ### Validator
-The coordinator exports a record of its public interactions with the parties in the script.data file generated the directory where coordinator_full_protocol is run. To verify the integrity of these interactions, run ./validator in the same directory as  script.data.
+The coordinator exports a record of its public interactions with the parties in the _script.data_ file generated the directory where _coordinator_full_protocol_ is run. To verify the integrity of these interactions, run _./validator_ in the same directory as _script.data_.
 
 ### Replay mode
-To record and replay an RSA ceremony using the same randomness, first run a ceremony adding command line option --mode record to the coordinator, and then replay it using option --mode replay. Intermediary data is stored in file record.data, and binary must be run from the same directory when replaying.
+To record and replay an RSA ceremony with 10 parties using the same randomness: 
+
+1. Run a ceremony adding command line option _--mode record_ and _--passive_:
+   ___./coordinator_full_protocol --parties 10 --passive --mode record___
+
+2. Replay it using option _--mode replay_:
+   ___./coordinator_full_protocol --parties 10 --passive --mode replay___
+
+Comments:
+1. Note that you need to also run all party binaries in both cases
+2. Intermediary data is stored in file _record.data_, and binaries must be run from the same directory when replaying.
 
 
 
