@@ -83,9 +83,11 @@ The coordinator exports a record of its public interactions with the parties in 
 To record and replay an RSA ceremony with 10 parties using the same randomness: 
 
 1. Run a ceremony adding command line option _--mode record_ and _--passive_:
+
    ___./coordinator_full_protocol --parties 10 --passive --mode record___
 
 2. Replay it using option _--mode replay_:
+
    ___./coordinator_full_protocol --parties 10 --passive --mode replay___
 
 Comments:
