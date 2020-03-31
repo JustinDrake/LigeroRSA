@@ -42,30 +42,33 @@ For Mac OS X, Windows, or Linux users with Docker:
 $ ./scripts/build-binary-docker.sh
 ```
 
-
 ## Running
 
-Lets run a computation for 10 parties. First start coordinator.
+### Ubuntu 14.04
+Lets run an active computation for 10 parties: First start the coordinator.
 
-For Ubuntu 14.04 users:
 ```bash
 $ ./build/src/coordinator_full_protocol --parties 10
 ```
 
-For the rest with Docker:
-```bash
-$ ./scripts/run-coordinator-in-docker.sh --parties 10
-```
+Now we can start to connect parties and verifiers to this coordinator. We will need to 
+provide the coordinator's IP address or by default our party will connect to 127.0.0.1:5555
 
-Now we can start connect parties to this coordinator. We will need to 
-provide coordinators IP address or by default our party will connect to 127.0.0.1:5555
-
-Again for Ubuntu 14.04 users:
 ```bash
 $ ./build/src/party_full_protocol --ip 127.0.0.1
 ```
 
-For the rest with Docker:
+```bash
+$ ./build/src/distributed_verifier --ip 127.0.0.1
+```
+
+### Passive Protocol with Docker
+For the 10-party passive protocol in Docker, run the coordinator and parties as follow:
+
+```bash
+$ ./scripts/run-coordinator-in-docker.sh --parties 10
+```
+
 ```bash
 $ ./scripts/run-party-in-docker.sh
 ```
@@ -73,7 +76,6 @@ $ ./scripts/run-party-in-docker.sh
 Once all ten parties connected or timeout for registration passed the protocol will start.
 
 ## Additional Scripts
-
 Instructions here are for native Ubuntu runs.
 
 ### Validator
@@ -84,14 +86,18 @@ To record and replay an RSA ceremony with 10 parties using the same randomness:
 
 1. Run a ceremony adding command line option _--mode record_ and _--passive_:
 
-   ___./coordinator_full_protocol --parties 10 --passive --mode record___
+```bash
+$ ./coordinator_full_protocol --parties 10 --passive --mode record
+```
 
 2. Replay it using option _--mode replay_:
 
-   ___./coordinator_full_protocol --parties 10 --passive --mode replay___
+```bash
+$./coordinator_full_protocol --parties 10 --passive --mode replay
+```
 
 Comments:
-1. Note that you need to also run all party binaries in both cases
+1. All party binaries must be run in both cases.
 2. Intermediary data is stored in file _record.data_, and binaries must be run from the same directory when replaying.
 
 
