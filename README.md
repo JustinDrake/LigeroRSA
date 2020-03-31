@@ -18,6 +18,11 @@ wget --max-redirect 3 https://github.com/Kitware/CMake/releases/download/v3.14.3
 tar -xzf cmake-3.14.3-Linux-x86_64.tar.gz
 export PATH="/cmake-3.14.3-Linux-x86_64/bin:${PATH}"
 ```
+3. Coordinator Node Settings
+   1. The Protocol currently uses port 5555 (passive/active protocol) and 5556 (proof verification), both ports must be open for TCP traffic on the coordinator's instance.
+   2. For a 1024-party RSA Ceremony, setting stack size to 100 MB (ulimit -s 100000) and number of open files to 10K (ulimit -n 10000) has proven sufficient in testing.
+   3. Minimum hardware for 1024-party node: Memory 600 GB, HDD 500 GB.
+
 ## Fetch Dependencies
 ```bash
 $ git submodule update --init --recursive
@@ -66,6 +71,29 @@ $ ./scripts/run-party-in-docker.sh
 ```
 
 Once all ten parties connected or timeout for registration passed the protocol will start.
+
+## Additional Scripts
+
+Instructions here are for native Ubuntu runs.
+
+### Validator
+The coordinator exports a record of its public interactions with the parties in the _script.data_ file generated the directory where _coordinator_full_protocol_ is run. To verify the integrity of these interactions, run _./validator_ in the same directory as _script.data_.
+
+### Replay mode
+To record and replay an RSA ceremony with 10 parties using the same randomness: 
+
+1. Run a ceremony adding command line option _--mode record_ and _--passive_:
+
+   ___./coordinator_full_protocol --parties 10 --passive --mode record___
+
+2. Replay it using option _--mode replay_:
+
+   ___./coordinator_full_protocol --parties 10 --passive --mode replay___
+
+Comments:
+1. Note that you need to also run all party binaries in both cases
+2. Intermediary data is stored in file _record.data_, and binaries must be run from the same directory when replaying.
+
 
 
 ## License 
