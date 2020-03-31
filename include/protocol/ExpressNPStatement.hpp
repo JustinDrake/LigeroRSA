@@ -9,10 +9,9 @@
 #include "FiniteFields.hpp"
 #include <nfl/params.hpp>
 
-// #define NDEBUG
+#include "Math.hpp"
 
-// this is consistent with max bound size (rNoise)
-#define MAX_BITS_SIZE 750
+#define NDEBUG
 
 struct intraBlocReferences {
     std::vector<size_t> blocs;
@@ -44,21 +43,19 @@ enum class Statements : uint64_t {
     GenerateData
 };
 
-constexpr int NbPrimesQ         = 21;
-constexpr int alphaCanLength    = 6;
-constexpr int alphaPSLength     = 6;
-constexpr int alphaGCDLength    = 18;
+// Defining Constants
+constexpr int maxBitSize                = 750; // this is consistent with max bound size (rNoise)
+constexpr size_t sharedDomainSize       = 65536ull;
+constexpr int NbPrimesQ                 = 21;
+constexpr int alphaCanLength            = 6;
+constexpr int alphaPSLength             = 6;
+constexpr int alphaGCDLength            = 19;
 
 // This factor drives the amount by which we oversample evaluation points
 // Indeed, we avoid picking points that are roots of unity; hence there is a non-null
 // probability that the evaluation point we pick is inadequate and therefore 
 // we need excess randomness
 constexpr uint64_t evaluationPointsOverSamplingFactor = 10;
-
-std::vector<unsigned char> hashPublicData() {
-    std::vector<unsigned char> tmp(iSeedSize);
-    return tmp;
-}
 
 size_t determineCSrandomnessSize(Statements expressNPStatement, size_t numberOfEvalPoints) {
     size_t size = 0;
@@ -96,36 +93,47 @@ size_t determineCSrandomnessSize(Statements expressNPStatement, size_t numberOfE
 template<typename FieldT>
 class expressNPStatement {
 public:
-    std::vector<size_t>     _siCoefsBlocIds;
-    std::vector<size_t>     _eiCoefsBlocIds;
-    std::vector<size_t>     _xiCoefsBlocIds;
+    std::vector<size_t>         _siCoefsBlocIds;
+    std::vector<size_t>         _eiCoefsBlocIds;
+    size_t                      _riCoefsBlocId;
+
+    std::vector<size_t>         _uxBlocs;
+    std::vector<size_t>         _uzBlocs;
+
+    std::vector<size_t>         _siBlocs;
+    std::vector<size_t>         _eiBlocs;
 
 protected:
-    size_t                  _blockSize;
-    builder<FieldT>&        _builder;
-    PublicData&             _publicData;
-    SecretData&             _secretData;
-    vars<FieldT>            _variables;
-    uint64_t*               _phis;
-    std::vector<size_t>     _xprimeIds;
-    std::vector<size_t>     _yprimeIds;
-    std::vector<size_t>     _zprimeIds;
-    intraBlocReferences     _xsharesPSidxs;
-    intraBlocReferences     _xsharesPSidxs_2;
-    intraBlocReferences     _xsharesPSidxs_3;
-    intraBlocReferences     _xsharesPSidxs_4;
-    intraBlocReferences     _xsharesCANidxs;
-    intraBlocReferences     _xsharesGCDidxs;
-    intraBlocReferences     _ysharesPSidxs;
-    intraBlocReferences     _ysharesPSidxs_2;
-    intraBlocReferences     _ysharesPSidxs_3;
-    intraBlocReferences     _ysharesPSidxs_4;
-    intraBlocReferences     _ysharesCANidxs;
-    intraBlocReferences     _ysharesGCDidxs;
-    intraBlocReferences     _zsharesCANidxs;
-    uint64_t*&               _randomness;
-    std::vector<uint64_t>   _qdivpPS, _qdivpCAN, _qdivpGCD;
-    bool                    _csPickRandom;
+    size_t                      _blockSize;
+    builder<FieldT>&            _builder;
+    PublicData&                 _publicData;
+    SigmaProtocolPublicData&    _sigmaProtocolPublicData;
+    SecretData&                 _secretData;
+    vars<FieldT>                _variables;
+    uint64_t*                   _phis;
+    std::vector<size_t>         _xprimeIds;
+    std::vector<size_t>         _yprimeIds;
+    std::vector<size_t>         _zprimeIds;
+    intraBlocReferences         _xsharesPSidxs;
+    intraBlocReferences         _xsharesPSidxs_2;
+    intraBlocReferences         _xsharesPSidxs_3;
+    intraBlocReferences         _xsharesPSidxs_4;
+    intraBlocReferences         _xsharesCANidxs;
+    intraBlocReferences         _xsharesGCDidxs;
+    intraBlocReferences         _ysharesPSidxs;
+    intraBlocReferences         _ysharesPSidxs_2;
+    intraBlocReferences         _ysharesPSidxs_3;
+    intraBlocReferences         _ysharesPSidxs_4;
+    intraBlocReferences         _ysharesCANidxs;
+    intraBlocReferences         _ysharesGCDidxs;
+    intraBlocReferences         _zsharesCANidxs;
+    uint64_t*&                  _randomness;
+    std::vector<uint64_t>       _qdivpPS, _qdivpCAN, _qdivpGCD;
+    bool                        _csPickRandom;
+
+    ligero::coordinates         _stitchingVariables;
+ 
+    ligero::coordinates         _W;
 
     auto rephraseAs2Nct(uint64_t d) {
         
@@ -210,7 +218,6 @@ protected:
             blocCol++;
         }
 
-        // padBloc(tc, blocCol, blocZeroIdx);
         return (_builder.add(tc));
     }
 
@@ -224,32 +231,32 @@ protected:
     }
 
     void Preprocessing() {
-		    auto ntt = new NTT(this->_publicData.modulusIdx, 65536ull, permut<65536>::compute);
+		    auto ntt = new NTT(this->_publicData.modulusIdx, sharedDomainSize, permut<sharedDomainSize>::compute);
 
-            this->_phis = (uint64_t*)calloc(65536, sizeof(uint64_t));
+            this->_phis = (uint64_t*)calloc(sharedDomainSize, sizeof(uint64_t));
             this->_phis[1] = 1;
             ntt->ntt(this->_phis);
 
             mpz_class q_over_p = 1;
-            for (auto i = 9; i < 21; i++) {
+            for (auto i = 9; i < NbPrimesQ; i++) {
                 q_over_p *= nfl::params<uint64_t>::P[i];
             }
 
-            nfl::poly_p<uint64_t, 65536, 21> qdivp{q_over_p};
+            nfl::poly_p<uint64_t, sharedDomainSize, NbPrimesQ> qdivp{q_over_p}; 
             qdivp.ntt_pow_phi();
 
             //PS
-            for (size_t idx = 0; idx < 6; idx++) {
+            for (size_t idx = 0; idx < _publicData.indicesPS.size(); idx++) {
                 this->_qdivpPS.emplace_back(qdivp.poly_obj().data()[_publicData.modulusIdx*_publicData.degree + _publicData.indicesPS[idx]]);
             }
 
             //CAN
-            for (size_t idx = 0; idx < 6; idx++) {
+            for (size_t idx = 0; idx < _publicData.indicesCAN.size(); idx++) {
                 this->_qdivpCAN.emplace_back(qdivp.poly_obj().data()[_publicData.modulusIdx*_publicData.degree + _publicData.indicesCAN[idx]]);
             }
 
             //GCD
-            for (size_t idx = 0; idx < 18; idx++) {
+            for (size_t idx = 0; idx < _publicData.indicesGCD.size(); idx++) {
                 this->_qdivpGCD.emplace_back(qdivp.poly_obj().data()[_publicData.modulusIdx*_publicData.degree + _publicData.indicesGCD[idx]]);
             }
 
@@ -259,9 +266,11 @@ protected:
     void NP_RSACeremony_Bounding_Variables(size_t blocZeroIdx, size_t blocOneIdx) {
             std::vector<FieldT> varsXs;
             std::vector<FieldT> varsXplusCs;
-            std::vector<FieldT> varsXplusDs;    
+            std::vector<FieldT> varsXplusDs;
             std::vector<FieldT> Cs;
             std::vector<FieldT> ds;
+
+            size_t nbBoundVariables = 131;
 
             std::vector<std::vector<FieldT>> bitDecomposition;
             std::vector<size_t> log2Ds;
@@ -270,14 +279,14 @@ protected:
 
             log2Ds.assign(_publicData.log2Ds.begin(), _publicData.log2Ds.end());
             
-            for (size_t idx = 0; idx < sizeIndices; idx++) {
+            for (size_t idx = 0; idx < nbBoundVariables; idx++) {
                 int ref = _publicData.modulusIdx + idx*NbPrimesQ;
                 Cs.emplace_back(_publicData.Cs[ref]);
                 ds.emplace_back(_publicData.Ds[ref]);
             }
 
             if (_secretData.isAvailable) {
-                for (size_t idx = 0; idx < sizeIndices; idx++) {
+                for (size_t idx = 0; idx < nbBoundVariables; idx++) {
                     int ref = _publicData.modulusIdx + idx*NbPrimesQ;
                     
                     varsXs.emplace_back(_secretData.Xs[ref]);
@@ -294,11 +303,11 @@ protected:
                     }
                 }
             } else {
-                varsXs.assign(sizeIndices, FieldT(0));
-                varsXplusCs.assign(sizeIndices, FieldT(0));
-                varsXplusDs.assign(sizeIndices, FieldT(0));
+                varsXs.assign(nbBoundVariables, FieldT(0));
+                varsXplusCs.assign(nbBoundVariables, FieldT(0));
+                varsXplusDs.assign(nbBoundVariables, FieldT(0));
 
-                for (size_t idx = 0; idx < sizeIndices; idx++) {
+                for (size_t idx = 0; idx < nbBoundVariables; idx++) {
                     for (size_t offset : {0,1}) {
                         std::vector<FieldT> bits(_publicData.log2Ds[idx]);
                         bitDecomposition.emplace_back(bits);
@@ -320,7 +329,6 @@ protected:
 
             transformation_constraint<FieldT> *transformationConstraint = new transformation_constraint<FieldT>;
             addKeyGenPolyEval(transformationConstraint, evaluationPoints, blocZeroIdx, blocOneIdx, blocCol);
-            // padBloc(transformationConstraint, blocCol, blocZeroIdx);
             size_t keyGenEvalBlocIdx = _builder.add(transformationConstraint);
 
             // Then set this misc block equal to 0
@@ -419,8 +427,7 @@ void NP_RSARound4_preSieving(size_t blocZeroIdx, size_t blocOneIdx) {
             _secretData.q_r4_2,
             blocCol);
 
-        // Padding the rest of the bloc
-        // padBloc(transformationConstraint, blocCol, blocZeroIdx);
+        // Adding to the constraint system
         size_t encryptionEvalBlocIdx = _builder.add(transformationConstraint);
 
         // Then set this misc block equal to 0
@@ -432,12 +439,94 @@ void NP_RSARound4_preSieving(size_t blocZeroIdx, size_t blocOneIdx) {
                 addIntrablocBoundingConstraint(embed(_secretData.vxP,0,_secretData.vxP.size()), std::vector<FieldT>(_secretData.vxP.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
                 addIntrablocBoundingConstraint(embed(_secretData.wxP,0,_secretData.wxP.size()), std::vector<FieldT>(_secretData.wxP.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
             } else {
-                std::vector<FieldT> placeholder(30, FieldT(0));
+                std::vector<FieldT> placeholder(alphaCanLength+alphaGCDLength+alphaPSLength, FieldT(0));
                 addIntrablocBoundingConstraint(placeholder, std::vector<FieldT>(placeholder.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
                 addIntrablocBoundingConstraint(placeholder, std::vector<FieldT>(placeholder.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
             }
         }
     }
+
+void NP_Stitching(size_t blocZeroIdx, size_t blocOneIdx) {
+
+    auto processBloc = [&](transformation_constraint<FieldT> *ct, size_t bloc, FieldT scalar = FieldT(1)) -> void {
+            for (size_t col = 0; col < this->_blockSize; col++) {
+                ct->block.push_back(bloc);
+                ct->source_position.push_back(col);
+                ct->scalar.push_back(scalar);
+                ct->target_position.push_back(0);
+            }
+    };
+
+    auto addVariable = [&](std::vector<size_t> blocks) -> void {
+        for (auto bloc : blocks) {
+            transformation_constraint<FieldT>* ct = new transformation_constraint<FieldT>;
+
+            // Add all variables
+            processBloc(ct, bloc);
+
+            // Add special flag to this constraint
+            ct->stitching = LinearCombinationsStitching::StitchingScalar;
+
+            // Adding to the constraint system
+            size_t stitchingEvalBlocIdx = _builder.add(ct);            
+        }
+    };
+
+    size_t blocStitchingIdx;
+    size_t blocStitchingCol;
+
+    if (this->_stitchingVariables.isAvailable) {
+        blocStitchingIdx = this->_stitchingVariables.bloc;
+        blocStitchingCol = this->_stitchingVariables.col;
+    } else {
+        // Add W1, W2 and Alpha
+        std::vector<FieldT> blockStitching(this->_blockSize, FieldT(0));
+        blockStitching[0] = this->_secretData.W1;
+        blockStitching[1] = this->_secretData.W2;
+        blockStitching[2] = this->_secretData.alpha;
+
+        // Populating inputs 
+        blocStitchingIdx =_builder.add(new variable_constraint<FieldT>());
+        blocStitchingCol = 0;
+        _variables.add(blocStitchingIdx,blockStitching);
+    }
+
+    // Stitching variables first
+    addVariable(this->_eiBlocs);
+    addVariable(this->_siBlocs);
+    addVariable(this->_uzBlocs);
+    addVariable(this->_uxBlocs);
+
+    // Add reference to W1, W2 and Alpha
+    {
+        transformation_constraint<FieldT>* ct = new transformation_constraint<FieldT>;
+
+        // W1
+        ct->block.push_back(blocStitchingIdx);
+        ct->source_position.push_back(blocStitchingCol);
+        ct->scalar.push_back(1);
+        ct->target_position.push_back(0);        
+
+        // W2
+        ct->block.push_back(blocStitchingIdx);
+        ct->source_position.push_back(blocStitchingCol+1);
+        ct->scalar.push_back(1);
+        ct->target_position.push_back(0);        
+
+        // Alpha
+        ct->block.push_back(blocStitchingIdx);
+        ct->source_position.push_back(blocStitchingCol+2);
+        ct->scalar.push_back(params<uint64_t>::P[0]);
+        ct->target_position.push_back(0);        
+
+        // Add special flag to this constraint
+        ct->stitching = LinearCombinationsStitching::StitchingNoScalar;
+
+        // Adding to the constraint system
+        size_t stitchingEvalBlocIdx = _builder.add(ct);
+    }
+}
+
 
 void NP_RSARound5_preSieving(size_t blocZeroIdx, size_t blocOneIdx) {
             // in this step:
@@ -489,8 +578,7 @@ void NP_RSARound5_preSieving(size_t blocZeroIdx, size_t blocOneIdx) {
                 _secretData.q_r5_2, // qci_2
                 blocCol);
 
-            // Padding the rest of the bloc
-            // padBloc(transformationConstraint, blocCol, blocZeroIdx);
+            // Adding to the constraint system
             size_t encryptionEvalBlocIdx = _builder.add(transformationConstraint);
 
             // Then set this misc block equal to 0
@@ -501,8 +589,9 @@ void NP_RSARound5_preSieving(size_t blocZeroIdx, size_t blocOneIdx) {
                 if (_secretData.isAvailable) {
                     addIntrablocBoundingConstraint(embed(_secretData.vzP,0,_secretData.vzP.size()), std::vector<FieldT>(_secretData.vzP.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
                     addIntrablocBoundingConstraint(embed(_secretData.wzP,0,_secretData.wzP.size()), std::vector<FieldT>(_secretData.wzP.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
+
                 } else {
-                    std::vector<FieldT> placeholder(30, FieldT(0));
+                    std::vector<FieldT> placeholder(alphaCanLength+alphaGCDLength+alphaPSLength, FieldT(0));
                     addIntrablocBoundingConstraint(placeholder, std::vector<FieldT>(placeholder.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
                     addIntrablocBoundingConstraint(placeholder, std::vector<FieldT>(placeholder.size(), FieldT(_publicData.sigma*10)), blocOneIdx, blocZeroIdx);
                 }
@@ -536,8 +625,7 @@ void NP_RSARound6_partialDecrypt(size_t blocZeroIdx, size_t blocOneIdx) {
             _secretData.q_r6,
             blocCol);
 
-        // Padding the rest of the bloc
-        // padBloc(transformationConstraint, blocCol, blocZeroIdx);
+        // Adding to the constraint system
         size_t encryptionEvalBlocIdx = _builder.add(transformationConstraint);
 
         // Then set this misc block equal to 0
@@ -562,8 +650,8 @@ void checkEvaluation(transformation_constraint<FieldT> *tc, std::vector<size_t> 
             // debug: check that this evaluation works
             #ifndef NDEBUG
             if (_secretData.isAvailable) {
-                nfl::poly_p<uint64_t, 65536, 21> xi;
-                for (size_t modIdx = 0; modIdx < 21; modIdx++) {
+                nfl::poly_p<uint64_t, sharedDomainSize, NbPrimesQ> xi;
+                for (size_t modIdx = 0; modIdx < NbPrimesQ; modIdx++) {
                     for (size_t powIdx = 0; powIdx < _publicData.degree; powIdx++) {
                         xi.poly_obj().data()[powIdx+modIdx*_publicData.degree] = this->_secretData.xi[powIdx+modIdx*_publicData.degree];
                     }
@@ -576,17 +664,6 @@ void checkEvaluation(transformation_constraint<FieldT> *tc, std::vector<size_t> 
                 for (size_t powIdx = 0; powIdx < _publicData.degree; powIdx++) {
                     evalManual = evalManual + powersOfEval[powIdx]*FieldT(this->_secretData.xi[powIdx+_publicData.modulusIdx*_publicData.degree]);
                 }
-
-                // std::cout << "evalManual" << evalManual.getValue() << std::endl;
-                // std::cout << "xi:" << xi.poly_obj().data()[_publicData.indicesGCD[i]] << std::endl;
-                // std::cout << "x_shares:" << this->_secretData.x_sharesGCD[i] << std::endl;
-                // std::cout << "q_over_p:" << this->_qdivpPS[i] << std::endl;
-                // std::cout << "modulus:" << FieldT::getModulus() << std::endl;
-
-                // std::cout << evalManual.getValue() << std::endl;
-                // std::cout << static_cast<uint64_t>(static_cast<__uint128_t>(this->_secretData.x_sharesGCD[i])*static_cast<__uint128_t>(this->_qdivpGCD[i]) % static_cast<__uint128_t>(FieldT::getModulus())) << std::endl;
-
-                // std::cout << (evalManual-(FieldT(this->_secretData.x_sharesGCD[i*21])*FieldT(this->_qdivpGCD[i]))).getValue() << std::endl;
             }
             #endif
 
@@ -631,8 +708,7 @@ void NP_Connecting_Proofs(size_t blocZeroIdx, size_t blocOneIdx) {
 
         checkEvaluation(tc, this->_zprimeIds,this->_publicData.indicesCAN, this->_zsharesCANidxs.blocs, this->_zsharesCANidxs.cols, this->_qdivpCAN, blocCol, true);
 
-        // Padding the rest of the bloc
-        // padBloc(tc, blocCol, blocZeroIdx);
+        // Adding to the constraint system
         size_t connectingProofsRowIdx = _builder.add(tc);
 
         // Then set this block equal to 0
@@ -685,8 +761,7 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         this->_ysharesPSidxs = y_sharesPSidxs;
         this->_ysharesCANidxs = y_sharesCANidxs;
 
-        // Padding the rest of the bloc
-        // padBloc(tc, blocCol, blocZeroIdx);
+        // Adding to the constraint system
         size_t canGenEvalBlocIdx = _builder.add(tc);
 
         // Then set this misc block equal to 0
@@ -721,18 +796,14 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                 blocCol
             );
 
-            // Padding the rest of the bloc
-            // padBloc(tc, blocCol, blocZeroIdx);
+            // Adding to the constraint system
             size_t canGenEvalBlocIdx = _builder.add(tc);
 
             // Then set this misc block equal to 0
             _builder.ensure_equality(canGenEvalBlocIdx, blocZeroIdx);
     }
 
-    void NP_RSARound10_jacobiTest(size_t blocZeroIdx, size_t blocOneIdx) {}
-
     void NP_RSARound11_12_jacobiGCD(size_t blocZeroIdx, size_t blocOneIdx) {
-            // Linear constraint Ax = b according to the Ligero paper, i.e. transformation according to the builder
             size_t blocCol = 0; // This variable keeps track of the current index for the misc bloc, in which we will mix a number of outputs
 
             transformation_constraint<FieldT> *tc = new transformation_constraint<FieldT>;
@@ -769,6 +840,9 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                 blocCol
             );
 
+            DBG("Slots taken in misc bloc after eq11 :" << blocCol);
+            assert(blocCol < this->_blockSize);
+
             addEquation12(
                 tc,
                 blocZeroIdx,
@@ -789,14 +863,82 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                 //3 [12]
                 _secretData.r_CRTs,
                 _secretData.z_sharesGCD,
+                _secretData.ss_GCD,
                 _secretData.q_r12,
                 _publicData.byGCD,
+                _publicData.finalModuli_GCD,
                 _publicData.gcds,
                 blocCol
             );
 
-            // Padding the rest of the bloc
-            // padBloc(tc, blocCol, blocZeroIdx);
+            DBG("Slots taken in misc bloc after eq12 :" << blocCol);
+             assert(blocCol < this->_blockSize);
+
+             addEquation13(
+                 tc,
+                 blocZeroIdx,
+                 blocOneIdx,
+
+                 //0
+                 _secretData.x_sharesPS,     // x_0
+                 _secretData.q_p_prod_r11,   // y_0
+                 _secretData.y_sharesPS,     // z_0  
+                 _secretData.q_q_prod_r11,   // t_0
+                 _secretData.expqGCD,        // u_0
+                 _secretData.sigmaxGCD,      // v_0
+                 _publicData.coefsGCD,       // a_0
+                 _publicData.prodgcds,       // b_0
+                 _publicData.gcds,           // c_0
+                 blocCol
+             );
+
+             DBG("Slots taken in misc bloc after eq13 :" << blocCol);
+            assert(blocCol < this->_blockSize);
+
+            // Check initial constraint
+            #ifndef NDEBUG
+            if (_secretData.isAvailable) {
+                    size_t& p = _publicData.modulusIdx;
+                    mpz_class prime = mpz_class(nfl::params<uint64_t>::P[p]);
+                    auto [alphasGCD, bucketSizeGCD] = ligero::math::fixed_bucket_n_primes(3*1000 + 210, alphaGCDLength,175);
+
+                    for (size_t j = 0 ; j < 128; j++) {
+                        for (size_t alphaGCDidx = 0; alphaGCDidx < alphaGCDLength; alphaGCDidx++) {
+                                    size_t index0 = p * alphaGCDLength + alphaGCDidx;
+                                    size_t index = p * 128 * alphaGCDLength + j * alphaGCDLength + alphaGCDidx;
+
+                                    FieldT x(_secretData.sigmaxGCD[index0]);
+                                    FieldT e(_sigmaProtocolPublicData.sigmaeGCD[index]);
+                                    FieldT r(_secretData.sigmarGCD[index]);
+                                    FieldT a(ligero::math::mod(alphasGCD[alphaGCDidx],prime).get_ui());
+                                    FieldT q(_secretData.sigmaqGCD[index]);
+                                    FieldT z(_sigmaProtocolPublicData.sigmazGCD[index]);
+
+                                    assert(x*e + r + a*q - z == FieldT(0));
+                            }
+                    }
+            }
+            #endif
+
+            DBG("sigma protocol check: P=" << _publicData.modulusIdx << "," << _sigmaProtocolPublicData.sigmaeGCD[0]);
+
+            addEquation14(
+                tc,
+                blocZeroIdx,
+                blocOneIdx,
+
+                _secretData.sigmaxGCD,
+                _secretData.sigmarGCD,
+                _secretData.sigmaqGCD,
+                _sigmaProtocolPublicData.sigmaeGCD,
+                _sigmaProtocolPublicData.sigmazGCD,
+                blocCol
+            );
+
+            DBG("Slots taken in misc bloc after eq14 :" << blocCol);
+            assert(blocCol < this->_blockSize);
+
+            // Adding to the constraint system
             size_t canGenEvalBlocIdx = _builder.add(tc);
 
             // Then set this misc block equal to 0
@@ -878,6 +1020,16 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
 
     // Adding the evaluation of a polynomial on a specific point
     void addEvalPt(transformation_constraint<FieldT> *tc, size_t targetPosition, FieldT scalar, std::vector<size_t>& coefRefs, std::vector<FieldT>& powerEval) { 
+
+        // reserve memory if possible
+        try {
+            tc->block.reserve(tc->block.size()+_publicData.degree);
+            tc->source_position.reserve(tc->source_position.size()+_publicData.degree);
+            tc->scalar.reserve(tc->scalar.size()+_publicData.degree);
+            tc->target_position.reserve(tc->target_position.size()+_publicData.degree);
+        } catch (...) {
+            DBG("Failed to pre-allocate memory.");
+        }
 
         for (size_t step = 0; step < _publicData.degree; step++) {
             tc->block.emplace_back(coefRefs[step/this->_blockSize]);
@@ -988,6 +1140,9 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             eiCoefsBlocIds = addSplitVariable(ei);
         }
 
+        this->_siBlocs = siCoefsBlocIds;
+        this->_eiBlocs = eiCoefsBlocIds;        
+
         // Splitting variables
         vector<size_t> qiCoefsBlocIds = addSplitVariable(qi);
 
@@ -1009,17 +1164,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             addEvalPt(newTransformationConstraint, blocCol, FieldT(FieldT::getModulus()-1)*(eval*powersOfEval.back()+1), qiCoefsBlocIds, powersOfEval); 
 
             blocCol++;
-        }
-    }
-
-    void padBloc(transformation_constraint<FieldT> *newTransformationConstraint, size_t &blocCol, size_t blocZeroIdx) {
-
-        // Pad the rest of the bloc
-        for (; blocCol < this->_blockSize; blocCol++) {
-            newTransformationConstraint->block.emplace_back(blocZeroIdx);
-            newTransformationConstraint->source_position.emplace_back(0);
-            newTransformationConstraint->scalar.emplace_back(0);
-            newTransformationConstraint->target_position.emplace_back(blocCol);
         }
     }
 
@@ -1115,15 +1259,19 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         ret.first.cols.insert(ret.first.cols.end(), {s_x_0,s_x_1,s_x_2,s_x_3,s_x_4,s_x_5});
         ret.second.cols.insert(ret.second.cols.end(), {s_y_idx,s_y_idx+1,s_y_idx+2,s_y_idx+3,s_y_idx+4,s_y_idx+5});
 
-        // Populating inputs 
+        // Populating inputs
         size_t miscBlocIdx =_builder.add(new variable_constraint<FieldT>());
         _variables.add(miscBlocIdx,miscBloc);
+        
+        DBG("Candidate Generation, bloc usage:" << miscIdx << "/" << miscBloc.size());
+        assert(miscIdx < this->_blockSize - 1);
 
         // Shared book-keeping for connecting proofs
-        ret.first.blocs.assign(6, miscBlocIdx);
-        ret.second.blocs.assign(6, miscBlocIdx);
+        ret.first.blocs.assign(alphaPSLength, miscBlocIdx);
+        ret.second.blocs.assign(alphaCanLength, miscBlocIdx);
 
         FieldT minusOne(FieldT::getModulus()-1);
+
         // Linear Combination
         for (size_t idx = 0; idx < alphaCanLength; idx++) {
 
@@ -1240,10 +1388,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             return (miscIdx - idxs.size());
         };
 
-        constexpr int NbPrimesQ         = 21;
-        constexpr int alphaCanLength    = 6;
-        constexpr int alphaPSLength     = 6;
-
         // Declaring all variables
         size_t s_x_0;
         size_t s_x_1;
@@ -1323,6 +1467,16 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         // Shared book-keeping for connecting proofs
         _zsharesCANidxs.cols.insert(_zsharesCANidxs.cols.end(), {s_x_3_idx,s_x_3_idx+1,s_x_3_idx+2,s_x_3_idx+3,s_x_3_idx+4,s_x_3_idx+5});
 
+        // For compactness, we will use this bloc to store the random value used for stitching  
+
+        // Add W1, W2 and Alpha
+        miscBloc[miscIdx++] = this->_secretData.W1;
+        miscBloc[miscIdx++] = this->_secretData.W2;
+        miscBloc[miscIdx++] = this->_secretData.alpha;
+
+        DBG("Beaver's triples and Stitching Variables, bloc usage:" << miscIdx << "/" << miscBloc.size());
+        assert(miscIdx < this->_blockSize - 1);
+
         // Populating inputs 
         size_t miscBlocIdx =_builder.add(new variable_constraint<FieldT>());
         _variables.add(miscBlocIdx,miscBloc);
@@ -1331,7 +1485,13 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         _xsharesPSidxs_2.blocs.assign(alphaPSLength, miscBlocIdx);
         _ysharesPSidxs_2.blocs.assign(alphaPSLength, miscBlocIdx);
 
+        // For book keeping, retain coordinates for W
+        _stitchingVariables.bloc         = miscBlocIdx;
+        _stitchingVariables.col          = miscIdx-3;
+        _stitchingVariables.isAvailable  = true;
+
         FieldT minusOne(FieldT::getModulus()-1);
+
         // Linear Combination
         for (size_t idx = 0; idx < alphaCanLength; idx++) {
 
@@ -1504,11 +1664,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             return (miscIdx - idxs.size());
         };
 
-        constexpr int NbPrimesQ             = 21;
-        constexpr int alphaCanLength        = 6;
-        constexpr int alphaPSLength         = 6;
-        constexpr int alphaGCDLength        = 18;
-
         // Declaring all variables
         size_t s_x_1_0;
         size_t s_x_1_1;
@@ -1614,6 +1769,7 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         this->_ysharesGCDidxs.blocs.assign(alphaGCDLength, miscBlocIdx);
 
         FieldT minusOne(FieldT::getModulus()-1);
+
         // Linear Combination
         for (size_t idx = 0; idx < alphaCanLength; idx++) {
 
@@ -1776,13 +1932,14 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         std::vector<uint64_t>& x_2,
         std::vector<uint64_t>& y_2,
         std::vector<uint64_t>& z_2,
+        std::vector<uint64_t>& t_2,
         std::vector<uint64_t>& a_2,
         std::vector<uint64_t>& b_2,
+        std::vector<uint64_t>& c_2,
 
         size_t& blocCol
     ) {
         // populating the misc bloc
-
         size_t& p = _publicData.modulusIdx;
 
         // per prime
@@ -1809,11 +1966,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             return (miscIdx - idxs.size());
         };
 
-        constexpr int NbPrimesQ             = 21;
-        constexpr int alphaCanLength        = 6;
-        constexpr int alphaPSLength         = 6;
-        constexpr int alphaGCDLength        = 18;
-
         // Declaring all variables
         size_t s_x_1_0;
         size_t s_x_1_1;
@@ -1835,6 +1987,7 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         size_t s_x_2_idx;
         size_t s_y_2_idx;
         size_t s_z_2_idx;
+        size_t s_t_2_idx;
 
         // Vectors
         std::vector<size_t> v;
@@ -1863,6 +2016,7 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             s_x_2_idx    = addVect(x_2, v);
             s_y_2_idx    = addVect(y_2, v);
             s_z_2_idx    = addVect(z_2, v);
+            s_t_2_idx    = addVect(t_2, v);
 
         } else {
             // Single Variables
@@ -1886,6 +2040,7 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             s_x_2_idx    = addEmptyVect(v);
             s_y_2_idx    = addEmptyVect(v);
             s_z_2_idx    = addEmptyVect(v);
+            s_t_2_idx    = addEmptyVect(v);
         }
 
         // Book-keep location of x shares
@@ -2016,11 +2171,377 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
 
                 tc->block.emplace_back(miscBlocIdx);
                 tc->source_position.emplace_back(s_z_2_idx + idx);
-                tc->scalar.emplace_back(FieldT(b_2[i+p]));
+                tc->scalar.emplace_back(minusOne * FieldT(b_2[i+p]));
+                tc->target_position.emplace_back(blocCol);
+
+                tc->block.emplace_back(miscBlocIdx);
+                tc->source_position.emplace_back(s_t_2_idx + idx);
+                tc->scalar.emplace_back(FieldT(c_2[i+p]));
                 tc->target_position.emplace_back(blocCol);
             }
 
             blocCol++;
+        }
+    }
+
+void addEquation13(
+         transformation_constraint<FieldT> *tc, 
+         size_t blocZeroIdx,
+         size_t blocOneIdx,
+
+         std::vector<uint64_t>& x_0,
+         std::vector<uint64_t>& y_0,
+         std::vector<uint64_t>& z_0,
+         std::vector<uint64_t>& t_0,
+         std::vector<uint64_t>& u_0,
+         std::vector<uint64_t>& v_0,
+         std::vector<uint64_t>& a_0,
+         std::vector<uint64_t>& b_0,
+         std::vector<uint64_t>& c_0,
+
+         size_t& blocCol
+     ) {
+         // populating the misc bloc
+         size_t& p = _publicData.modulusIdx;
+
+         // per prime
+         std::vector<FieldT> miscBloc(this->_blockSize, FieldT(0));
+         size_t miscIdx=0;
+
+         auto addEmptyVar = [&]() -> size_t {
+             miscBloc[miscIdx++] = FieldT(0);
+             return (miscIdx-1);
+         };
+
+         auto addEmptyVect = [&](std::vector<size_t> idxs) -> size_t {
+             for (size_t idx : idxs) {miscBloc[miscIdx++] = FieldT(0);}
+             return (miscIdx - idxs.size());
+         };
+
+         auto addVar = [&](uint64_t a) -> size_t {
+             miscBloc[miscIdx++] = a;
+             return (miscIdx-1);
+         };
+
+         auto addVect = [&](std::vector<uint64_t>& a, std::vector<size_t> idxs) -> size_t {
+             for (size_t idx : idxs) {miscBloc[miscIdx++] = a[idx];}
+             return (miscIdx - idxs.size());
+         };
+
+         // Declaring all variables
+         size_t s_x_0_0;
+         size_t s_x_0_1;
+         size_t s_x_0_2;
+         size_t s_x_0_3;
+         size_t s_x_0_4;
+         size_t s_x_0_5;
+
+         size_t s_z_0_0;
+         size_t s_z_0_1;
+         size_t s_z_0_2;
+         size_t s_z_0_3;
+         size_t s_z_0_4;
+         size_t s_z_0_5;
+
+         size_t s_y_0_idx;
+         size_t s_t_0_idx;
+         size_t s_u_0_idx;
+         size_t s_v_0_idx;
+
+         // Vectors
+         std::vector<size_t> v, v2;
+         for (size_t idx = 0; idx < alphaGCDLength; idx++) {v.push_back(idx*NbPrimesQ+p);}
+         for (size_t idx = 0; idx < alphaGCDLength; idx++) {v2.push_back(p*alphaGCDLength+idx);}
+
+         if (_secretData.isAvailable) {
+
+             // Single Variables
+             s_x_0_0   = addVar(x_0[              p]);
+             s_x_0_1   = addVar(x_0[  NbPrimesQ + p]);
+             s_x_0_2   = addVar(x_0[2*NbPrimesQ + p]);
+             s_x_0_3   = addVar(x_0[3*NbPrimesQ + p]);
+             s_x_0_4   = addVar(x_0[4*NbPrimesQ + p]);
+             s_x_0_5   = addVar(x_0[5*NbPrimesQ + p]);
+
+             s_z_0_0   = addVar(z_0[              p]);
+             s_z_0_1   = addVar(z_0[  NbPrimesQ + p]);
+             s_z_0_2   = addVar(z_0[2*NbPrimesQ + p]);
+             s_z_0_3   = addVar(z_0[3*NbPrimesQ + p]);
+             s_z_0_4   = addVar(z_0[4*NbPrimesQ + p]);
+             s_z_0_5   = addVar(z_0[5*NbPrimesQ + p]);
+
+             s_y_0_idx    = addVect(y_0, v);
+             s_t_0_idx    = addVect(t_0, v);
+             s_u_0_idx    = addVect(u_0, v2);
+             s_v_0_idx    = addVect(v_0, v2);
+
+         } else {
+             // Single Variables
+             s_x_0_0   = addEmptyVar();
+             s_x_0_1   = addEmptyVar();
+             s_x_0_2   = addEmptyVar();
+             s_x_0_3   = addEmptyVar();
+             s_x_0_4   = addEmptyVar();
+             s_x_0_5   = addEmptyVar();
+
+             s_z_0_0   = addEmptyVar();
+             s_z_0_1   = addEmptyVar();
+             s_z_0_2   = addEmptyVar();
+             s_z_0_3   = addEmptyVar();
+             s_z_0_4   = addEmptyVar();
+             s_z_0_5   = addEmptyVar();
+
+             s_y_0_idx    = addEmptyVect(v);
+             s_t_0_idx    = addEmptyVect(v);
+             s_u_0_idx    = addEmptyVect(v2);
+             s_v_0_idx    = addEmptyVect(v2);
+         }
+
+         // Populating inputs 
+         size_t miscBlocIdx =_builder.add(new variable_constraint<FieldT>());
+         _variables.add(miscBlocIdx,miscBloc);
+
+         FieldT minusOne(FieldT::getModulus()-1);
+
+         // Linear Combination
+         for (size_t idx = 0; idx < alphaGCDLength; idx++) {
+
+             size_t i = idx * NbPrimesQ;
+
+             {
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_x_0_0);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+0*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_x_0_1);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+1*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_x_0_2);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+2*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_x_0_3);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+3*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_x_0_4);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+4*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_x_0_5);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+5*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(blocOneIdx);
+                 tc->source_position.emplace_back(0);
+                 tc->scalar.emplace_back(FieldT(_publicData.special ? FieldT(3) : FieldT(0)) * FieldT(a_0[7*i+6*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_y_0_idx + idx);
+                 tc->scalar.emplace_back(minusOne * FieldT(b_0[i + p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_z_0_0);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+0*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_z_0_1);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+1*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_z_0_2);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+2*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_z_0_3);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+3*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_z_0_4);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+4*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_z_0_5);
+                 tc->scalar.emplace_back(FieldT(a_0[7*i+5*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(blocOneIdx);
+                 tc->source_position.emplace_back(0);
+                 tc->scalar.emplace_back(FieldT(_publicData.special ? FieldT(3) : FieldT(0)) * FieldT(a_0[7*i+6*NbPrimesQ+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_t_0_idx + idx);
+                 tc->scalar.emplace_back(minusOne * FieldT(b_0[i + p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(blocOneIdx);
+                 tc->source_position.emplace_back(0);
+                 tc->scalar.emplace_back(minusOne * FieldT(_publicData.special ? (FieldT(_publicData.finalModuli_GCD[i+p]) + FieldT(1)) : FieldT(0)));
+                 tc->target_position.emplace_back(blocCol);
+             }
+ 
+             {
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_u_0_idx + idx);
+                 tc->scalar.emplace_back(minusOne * FieldT(c_0[i+p]));
+                 tc->target_position.emplace_back(blocCol);
+
+                 tc->block.emplace_back(miscBlocIdx);
+                 tc->source_position.emplace_back(s_v_0_idx + idx);
+                 tc->scalar.emplace_back(FieldT(4));
+                 tc->target_position.emplace_back(blocCol);
+             }
+
+             blocCol++;
+         }
+     }
+
+    // sigma_xGCD * sigma_eGCD + sigma_rGCD + alphasGCD[alphaGCDidx] * quotient - sigma_zGCD, prime == 0;
+    // x_1 * a_1 + y_1 + alphasGCD[alphaGCDidx] * z_1 - b_1 == 0
+
+    void addEquation14(
+        transformation_constraint<FieldT> *tc, 
+        size_t blocZeroIdx,
+        size_t blocOneIdx,
+        std::vector<uint64_t>& x_1, // _secretData.sigmaxGCD,
+        std::vector<uint64_t>& y_1, // _secretData.sigmarGCD,
+        std::vector<uint64_t>& z_1, // _secretData.sigmaqGCD,
+        std::vector<uint64_t>& a_1, // _sigmaProtocolPublicData.sigmaeGCD,
+        std::vector<uint64_t>& b_1, // _sigmaProtocolPublicData.sigmazGCD,
+        size_t& blocCol
+    ) {
+        size_t& p = _publicData.modulusIdx;
+
+        // per prime
+        std::vector<FieldT> miscBloc(this->_blockSize, FieldT(0));
+        size_t miscIdx=0;
+
+        auto addEmptyVar = [&]() -> size_t {
+            miscBloc[miscIdx++] = FieldT(0);
+            return (miscIdx-1);
+        };
+
+        auto addEmptyVect = [&](std::vector<size_t> idxs) -> size_t {
+            for (size_t idx : idxs) {miscBloc[miscIdx++] = FieldT(0);}
+            return (miscIdx - idxs.size());
+        };
+
+        auto addVar = [&](uint64_t a) -> size_t {
+            miscBloc[miscIdx++] = a;
+            return (miscIdx-1);
+        };
+
+        auto addVect = [&](std::vector<uint64_t>& a, std::vector<size_t> idxs) -> size_t {
+            for (size_t idx : idxs) {miscBloc[miscIdx++] = a[idx];}
+            return (miscIdx - idxs.size());
+        };
+
+        // Declaring all variables
+        std::vector<size_t> s_x_1;
+        std::vector<size_t> s_y_1;
+        std::vector<size_t> s_z_1;
+
+        size_t s_x_1_idx;
+        size_t s_y_1_idx;
+        size_t s_z_1_idx;
+
+        // sigma_xGCD * sigma_eGCD + sigma_rGCD + alphasGCD[alphaGCDidx] * quotient - sigma_zGCD, prime == 0;
+        // x_1 * a_1 + y_1 + alphasGCD[alphaGCDidx] * z_1 - b_1 == 0
+        auto [alphasGCD, bucketSizeGCD] = ligero::math::fixed_bucket_n_primes(3*1000 + 210, alphaGCDLength,175);
+
+        // Vectors
+        std::vector<size_t> v1;
+        std::vector<size_t> v2;
+
+        for (size_t idx = 0; idx < alphaGCDLength; idx++) {
+            v1.push_back(p * alphaGCDLength + idx);
+            }
+
+        for (size_t j = 0; j<128;j++) {
+            for (size_t idx = 0; idx < alphaGCDLength; idx++) {
+                v2.push_back(p * 128 * alphaGCDLength + j * alphaGCDLength + idx);
+                }
+            }
+
+        if (_secretData.isAvailable) {
+            s_x_1_idx    = addVect(x_1, v1);
+            s_y_1_idx    = addVect(y_1, v2);
+        } else {
+            s_x_1_idx    = addEmptyVect(v1);
+            s_y_1_idx    = addEmptyVect(v2);
+        }
+
+        // Populating inputs
+        size_t miscBlocIdx =_builder.add(new variable_constraint<FieldT>());
+       _variables.add(miscBlocIdx,miscBloc);
+
+        miscIdx = 0;
+        miscBloc.assign(this->_blockSize, FieldT(0));
+        if (_secretData.isAvailable) {
+            s_z_1_idx    = addVect(z_1, v2);
+        } else {
+            s_z_1_idx    = addEmptyVect(v2);
+        }
+
+        // Populating inputs
+        size_t miscBlocIdx2 =_builder.add(new variable_constraint<FieldT>());
+       _variables.add(miscBlocIdx2,miscBloc);
+
+        FieldT minusOne(FieldT::getModulus()-1);
+
+        std::vector<uint64_t> aGCD_u;
+        mpz_class prime = mpz_class(nfl::params<uint64_t>::P[p]);
+        for (size_t idx = 0; idx < alphaGCDLength; idx++) {
+                aGCD_u.emplace_back(ligero::math::mod(alphasGCD[idx],prime).get_ui());
+        }
+
+    // sigma_xGCD * sigma_eGCD + sigma_rGCD + alphasGCD[alphaGCDidx] * quotient - sigma_zGCD, prime == 0;
+    // x_1 * a_1 + y_1 + alphasGCD[alphaGCDidx] * z_1 - b_1 == 0
+
+        // Linear Combination
+        for (size_t j = 0 ; j < 128; j++) {
+            for (size_t idx = 0; idx < alphaGCDLength; idx++) {
+
+                size_t i = p * 128*alphaGCDLength;
+
+                tc->block.emplace_back(miscBlocIdx);
+                tc->source_position.emplace_back(s_x_1_idx + idx);
+                tc->scalar.emplace_back(FieldT(a_1[i + j * alphaGCDLength + idx]));
+                tc->target_position.emplace_back(blocCol);
+
+                tc->block.emplace_back(miscBlocIdx);
+                tc->source_position.emplace_back(s_y_1_idx + j * alphaGCDLength + idx);
+                tc->scalar.emplace_back(1);
+                tc->target_position.emplace_back(blocCol);
+
+                tc->block.emplace_back(miscBlocIdx2);
+                tc->source_position.emplace_back(s_z_1_idx + j * alphaGCDLength + idx);
+                tc->scalar.emplace_back(aGCD_u[idx]);
+                tc->target_position.emplace_back(blocCol);
+
+                tc->block.emplace_back(blocOneIdx);
+                tc->source_position.emplace_back(0);
+                tc->scalar.emplace_back(minusOne*FieldT(b_1[i + j * alphaGCDLength + idx]));
+                tc->target_position.emplace_back(blocCol);
+
+                blocCol++;
+            }
+
         }
     }
 
@@ -2098,6 +2619,8 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         // vector<size_t> xCoefsBlocIds = addSplitVariable(x);
         vector<size_t> yCoefsBlocIds = addSplitVariable(y);
         vector<size_t> qCoefsBlocIds = addSplitVariable(q);
+
+        this->_uxBlocs = xCoefsBlocIds;
 
         // Evaluate on specific points
         DBG("Number of evaluation points:" << evaluationPoints.size());
@@ -2375,6 +2898,8 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
             yCoefsBlocIds = addSplitVariable(y);
         }
 
+        this->_uzBlocs = yCoefsBlocIds;
+
         // Splitting variables
         vector<size_t> xCoefsBlocIds = addSplitVariable(x);
         vector<size_t> zCoefsBlocIds = addSplitVariable(z);
@@ -2627,11 +3152,11 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         std::vector<FieldT> bitDecompositions;
         size_t colVar = 0;
         size_t colBit = 0;
-        FieldT bitDecompositionScalar[MAX_BITS_SIZE];
+        FieldT bitDecompositionScalar[maxBitSize];
         size_t initialOffset = varsIn.size();
 
         FieldT powerOfTwo = 1;
-        for (size_t i = 0; i < MAX_BITS_SIZE; i++) {
+        for (size_t i = 0; i < maxBitSize; i++) {
 
             bitDecompositionScalar[i] = powerOfTwo;
             powerOfTwo = powerOfTwo * 2;
@@ -2778,7 +3303,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
 
         if (col != 0) {
                 size_t miscConstraintsIdx = _builder.add(ct);
-                // padBloc(ct, col, blockZeroIdx);
 
                 _builder.ensure_equality(miscConstraintsIdx, blockZeroIdx);
             }
@@ -2792,11 +3316,11 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
         std::vector<uint64_t> log2Ds;
         size_t colVar = 0;
         size_t colBit = 0;
-        FieldT bitDecompositionScalar[MAX_BITS_SIZE];
+        FieldT bitDecompositionScalar[maxBitSize];
         size_t initialOffset = varsIn.size();
 
         FieldT powerOfTwo = 1; 
-        for (size_t i = 0; i < MAX_BITS_SIZE; i++) {
+        for (size_t i = 0; i < maxBitSize; i++) {
 
             bitDecompositionScalar[i] = powerOfTwo;
             powerOfTwo = powerOfTwo * 2;
@@ -2953,7 +3477,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
 
         if (col != 0) {
                 size_t miscConstraintsIdx = _builder.add(ct);
-                // padBloc(ct, col, blockZeroIdx);
 
                 _builder.ensure_equality(miscConstraintsIdx, blockZeroIdx);
             }
@@ -3093,7 +3616,7 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
     }
 
     public:
-        expressNPStatement(PublicData& pdata, SecretData& sdata, builder<FieldT>& builder, vector<vector<FieldT>>* v, size_t blockSizeIn, uint64_t *&randomness) : _publicData(pdata), _secretData(sdata), _blockSize(blockSizeIn), _variables(v, blockSizeIn), _builder(builder), _randomness(randomness) {};
+        expressNPStatement(PublicData& pdata, SigmaProtocolPublicData& spdata, SecretData& sdata, builder<FieldT>& builder, vector<vector<FieldT>>* v, size_t blockSizeIn, uint64_t *&randomness) : _publicData(pdata), _sigmaProtocolPublicData(spdata), _secretData(sdata), _blockSize(blockSizeIn), _variables(v, blockSizeIn), _builder(builder), _randomness(randomness) {};
 
         // Build a Basic Constraint Set (Matrix Multiplication)
         void buildConstraintSet(Statements expressNPStatement, bool csRandomness = true) {
@@ -3261,7 +3784,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                                 addEvalPt(transformationConstraint, blocCol++, FieldT(1), basicPolyIdxs, powersOfEval);
                             }
 
-                            // padBloc(transformationConstraint, blocCol, blocZeroIdx);
                             size_t evaluationBasicPolyIdx = _builder.add(transformationConstraint);
 
                             _builder.ensure_equality(evaluationBasicPolyIdx, valuationIdx);
@@ -3301,7 +3823,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                                 addEvalPt(transformationConstraint, blocCol++, FieldT(1), basicPolyIdxs, powersOfEval);
                             }
 
-                            // padBloc(transformationConstraint, blocCol, blocZeroIdx);
                             size_t evaluationBasicPolyIdx = _builder.add(transformationConstraint);
 
                             _builder.ensure_equality(evaluationBasicPolyIdx, valuationIdx);
@@ -3404,48 +3925,6 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                     }
                     break;
 
-                case Statements::RSARound10_jacobiTest:
-                    {
-                        // v = gamma, u = gamma ^ x mod N
-                        // x = log_v(u) mod N
-                        //
-                        // Public data:
-                        // v = gamma - public 
-                        //
-                        // Secret data:
-                        // x - secret
-                        // r - secret
-                        // a - secret a = v ^ r
-                        //
-                        // in this step:
-                        // here goes Jacobi test verification
-                        // v = gamma, u = gamma ^ x mod N
-                        // x = log_v(u) mod N
-                        // a = v ^ r mod N
-                        // 1. Pick random r, a = v ^ r mod N, send a
-                        // 2. Verifier sends message e
-                        // 3. Prover sends z = r + e * x (NP statement)
-                        // 4. Verifier checks v ^ z = a * (u ^ e) (NOT NP statement)
-                        //
-                        // e' = hash(a, v, u) 
-                        // e = prg(seed=e')
-                        // 3. Proof: a, e, z -> v^z = a * u ^ e 
-
-                            // Constant blocs
-                        auto [blocZeroIdx, blocOneIdx] = createBlocs0and1();
-                        NP_RSARound10_jacobiTest(blocZeroIdx, blocOneIdx);
-
-                        // addEquationJacobi( 
-                        //     transformationConstraint,
-                        //     evaluationPoints,
-                        //     blocZeroIdx,
-                        //     blocOneIdx,
-                        //     1,// _publicData.gamma,
-                        //     blocCol);
-
-                    }
-                    break;
-
                 case Statements::RSARound11_12_jacobiGCD:
                     {
                         // Preprocessing: Derive & store phis
@@ -3530,6 +4009,10 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                         // Constant blocs
                         auto [blocZeroIdx, blocOneIdx] = createBlocs0and1();
 
+                        // W not generated yet
+                        this->_W.isAvailable = false;
+
+                        // Core constraints
                         NP_RSARound3_keyGen(blocZeroIdx, blocOneIdx);
                         NP_RSARound4_preSieving(blocZeroIdx, blocOneIdx);
                         NP_RSARound5_preSieving(blocZeroIdx, blocOneIdx);
@@ -3537,8 +4020,14 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                         NP_RSARound7_candidateGeneration(blocZeroIdx, blocOneIdx);
                         NP_RSARound8_beaversTriples(blocZeroIdx, blocOneIdx);
                         NP_RSARound11_12_jacobiGCD(blocZeroIdx, blocOneIdx);
+
+                        // Tying proofs together
+                        NP_Stitching(blocZeroIdx, blocOneIdx);
                         NP_Connecting_Proofs(blocZeroIdx, blocOneIdx);
                         NP_Equate_Variables(blocZeroIdx, blocOneIdx);
+
+                        // NP portions
+                        // NP_RSACeremony_Bounding_Variables(blocZeroIdx, blocOneIdx);
 
                         // Clean-up
                         free(this->_phis);
@@ -3553,10 +4042,17 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                         // Constant blocs
                         auto [blocZeroIdx, blocOneIdx] = createBlocs0and1();
 
+                         // W not generated yet
+                        this->_stitchingVariables.isAvailable = false;
+
+                        // Core constraints
                         NP_RSARound3_keyGen(blocZeroIdx, blocOneIdx);
                         NP_RSARound4_preSieving(blocZeroIdx, blocOneIdx);
                         NP_RSARound5_preSieving(blocZeroIdx, blocOneIdx);
                         NP_RSARound6_partialDecrypt(blocZeroIdx, blocOneIdx);
+
+                        // Tying proofs together
+                        NP_Stitching(blocZeroIdx, blocOneIdx);
 
                         // Clean-up
                         free(this->_phis);
@@ -3567,22 +4063,49 @@ void NP_RSARound7_candidateGeneration(size_t blocZeroIdx, size_t blocOneIdx) {
                     {
                         std::vector<FieldT> ei;
                         std::vector<FieldT> si;
-                        std::vector<FieldT> xi;
+                        size_t r_idx;
+
+                        std::vector<FieldT> miscBloc(this->_blockSize, FieldT(0));
+                        size_t miscIdx = 0;
+
+                        size_t& p = _publicData.modulusIdx;
+                        std::vector<size_t> v2;
+
+                        auto addVect = [&](std::vector<uint64_t>& a, std::vector<size_t> idxs) -> size_t {
+                            for (size_t idx : idxs) {miscBloc[miscIdx++] = a[idx];}
+                            return (miscIdx - idxs.size());
+                        };
+
+                        auto addEmptyVect = [&](std::vector<size_t> idxs) -> size_t {
+                            for (size_t idx : idxs) {miscBloc[miscIdx++] = FieldT(0);}
+                            return (miscIdx - idxs.size());
+                        };
+
+                        for (size_t j = 0; j<128;j++) {
+                            for (size_t idx = 0; idx < alphaGCDLength; idx++) {
+                                v2.push_back(p * 128 * alphaGCDLength + j * alphaGCDLength + idx);
+                                }
+                            }
 
                         // Secret Data: either source or initialize if not available
                         if (_secretData.isAvailable) {
                             ei = embed(_secretData.eiP, _publicData.modulusIdx * _publicData.degree, _publicData.degree);
                             si = embed(_secretData.siP, _publicData.modulusIdx * _publicData.degree, _publicData.degree);
-                            xi = embed(_secretData.xi, _publicData.modulusIdx * _publicData.degree, _publicData.degree);
+                            r_idx = addVect(_secretData.sigmarGCD, v2);
                         } else {
                             ei.assign(_publicData.degree, FieldT(0));
                             si.assign(_publicData.degree, FieldT(0));
-                            xi.assign(_publicData.degree, FieldT(0));
+                            r_idx = addEmptyVect(v2);
                         }
 
                         this->_siCoefsBlocIds = addSplitVariable(si);
                         this->_eiCoefsBlocIds = addSplitVariable(ei);
-                        this->_xiCoefsBlocIds = addSplitVariable(xi);
+
+                        // Populating inputs
+                        size_t miscBlocIdx =_builder.add(new variable_constraint<FieldT>());
+                        _variables.add(miscBlocIdx,miscBloc);
+
+                        this->_riCoefsBlocId = miscBlocIdx;
                     }
                     break;
 

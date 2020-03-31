@@ -92,11 +92,14 @@ public:
 			const std::vector<size_t>& b,
 			const std::vector<size_t>& s,
 			const std::vector<size_t>& t);
-	transformation_constraint() { type = ConstraintType::transformation; }
+
+	transformation_constraint() { type = ConstraintType::transformation; stitching = LinearCombinationsStitching::Regular;}
+
 	std::vector<size_t> block;
 	std::vector<size_t> source_position;
 	std::vector<size_t> target_position;
 	std::vector<FieldT> scalar;
+	LinearCombinationsStitching stitching;
 	size_t size() const {return block.size();}
 	void emplace(size_t b, size_t src, size_t tgt, FieldT s = 1);
 };

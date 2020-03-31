@@ -53,22 +53,20 @@ using std::make_pair;
 
 template<typename FieldT>
 builder<FieldT>::builder(size_t block_sz):block_size(block_sz) {
-	// add constant block of zeroes and constant block of ones at start
-	// add(new constant_constraint<FieldT>(vector<FieldT>(block_sz, FieldT(0))));
-	// add(new constant_constraint<FieldT>(vector<FieldT>(block_sz, FieldT(1))));
 }
 
 template<typename FieldT>
 size_t builder<FieldT>::add(constraint* c, bool special) {
 	constraints.emplace_back(c);
 	equality_graph.push_back(vector<size_t>());
-	// save it if it's special
+
 	if(special) {
 		special_blocks.push_back(constraints.size()-1);
 	}
 	return constraints.size()-1;
 }
 
+// ==============================================================================================
 // classify variable 'type' for use with ensure_equality
 // see which takes precedence for staying
 // var = variable
@@ -84,6 +82,8 @@ size_t builder<FieldT>::add(constraint* c, bool special) {
 // 1 res|NEW NEW NEW res
 // 2 con|con NEW NEW con
 // 3 otr|var res con LOW
+// ==============================================================================================
+
 template<typename FieldT>
 void builder<FieldT>::ensure_equality(size_t a, size_t b) {
 	assert(a < constraints.size());
@@ -100,8 +100,8 @@ inline bool in_sorted_vector(const vector<T>& v, T elem) {
 	return *it == elem;
 }
 
-// overview:
-// >>> STAGE 1 <<<
+// ==============================================================================================
+// >>> STAGE 1 :
 // Sweep through blocks and determine which constraints can be deleted
 // Can be deleted iff
 // 1) not in a nontrivial equality class
@@ -111,16 +111,11 @@ inline bool in_sorted_vector(const vector<T>& v, T elem) {
 // TRANSFORM: LINEAR, TRANSFORM <-- note that a following linear is 'promoted' to transform
 // We figure this out, and 'skip' unnecessary constraints by changing their surroundings
 
-// >>> STAGE 2 <<<
-// actually rewire these constraints
-
-
-// >>> STAGE 3 <<<
-// Sweep through blocks and calculate values for only blocks we're keeping
-
-// >> STAGE 4 <<
-// Determine which block(s) of an equality class will be kept,
-// add new constraints if necessary, and change constraints which refer to such blocks
+// >>> STAGE 2 : actually rewire these constraints
+// >>> STAGE 3 : Sweep through blocks and calculate values for only blocks we're keepin
+// >>> STAGE 4 : Determine which block(s) of an equality class will be kept,
+// 				 add new constraints if necessary, and change constraints which refer to such blocks
+// ==============================================================================================
 
 // +----------------------+
 // | BEGINNING OF STAGE 1 |
@@ -143,9 +138,10 @@ void builder<FieldT>::determine_removable(vector<bool>& removable) const {
 		}
 
 		removable[cons_idx] = true;
-
 		const constraint* cons = constraints[cons_idx];
+		
 		switch(cons->type) {
+			
 			// inverse constraint makes transformation blocks unremovable
 			case ConstraintType::inverse:
 			{
@@ -159,6 +155,7 @@ void builder<FieldT>::determine_removable(vector<bool>& removable) const {
 				}
 				break;
 			}
+			
 			// linear constraint just marks blocks as nonterminal
 			case ConstraintType::linear:
 			{
@@ -168,6 +165,7 @@ void builder<FieldT>::determine_removable(vector<bool>& removable) const {
 				}
 				break;
 			}
+			
 			// quadratic constraint makes transformation blocks unremovable
 			case ConstraintType::quadratic:
 			{
@@ -187,6 +185,7 @@ void builder<FieldT>::determine_removable(vector<bool>& removable) const {
 				}
 				break;
 			}
+
 			// transformation constraint just marks blocks as nonterminal
 			case ConstraintType::transformation:
 			{
@@ -197,6 +196,7 @@ void builder<FieldT>::determine_removable(vector<bool>& removable) const {
 				}
 				break;
 			}
+
 			// variables and constants are not removable
 			default:
 			{
@@ -217,20 +217,20 @@ void builder<FieldT>::determine_removable(vector<bool>& removable) const {
 
 // rewire a inverse constraint depending on what is removable
 template<typename FieldT>
-void builder<FieldT>::rewire_inverse(size_t idx,
-		const vector<bool>& removable) {
-	typedef pair<size_t, FieldT> data;
-	vector<data> new_data;
-	inverse_constraint<FieldT>* const cons = static_cast<inverse_constraint<FieldT>*>(constraints[idx]);
+void builder<FieldT>::rewire_inverse(size_t idx, const vector<bool>& removable) {
+	typedef pair<size_t, FieldT> 		data;
+	vector<data> 						new_data;
+	inverse_constraint<FieldT>* const 	cons = static_cast<inverse_constraint<FieldT>*>(constraints[idx]);
+	
 	for(size_t pos = 0; pos < cons->block.size(); ++pos) {
 		// remove linear constraints
 		const size_t old_block = cons->block[pos];
 		const FieldT old_scalar = cons->scalar[pos];
-
 		const constraint* const sub_cons = constraints[old_block];
+
 		if(removable[old_block] && sub_cons->type == ConstraintType::linear) {
-			const linear_constraint<FieldT>* const sub_lcons =
-				static_cast<const linear_constraint<FieldT>*>(sub_cons);
+			const linear_constraint<FieldT>* const sub_lcons = static_cast<const linear_constraint<FieldT>*>(sub_cons);
+			
 			// forward data from linear constraint, multiplied by scalar
 			for(size_t sub_pos = 0; sub_pos < sub_lcons->block.size(); ++sub_pos) {
 				const size_t new_block = sub_lcons->block[sub_pos];
@@ -238,20 +238,23 @@ void builder<FieldT>::rewire_inverse(size_t idx,
 
 				new_data.emplace_back(new_block, new_scalar * old_scalar);
 			}
+
 		} else {
 			new_data.emplace_back(old_block, old_scalar);
 		}
 	}
 
 	// sort by block so we can reduce redundant entries when combining
-	std::sort(new_data.begin(), new_data.end(),
-			[](const data& a, const data& b) -> bool { 
-    	return a.first < b.first;
-	});
+	std::sort(
+		new_data.begin(), 
+		new_data.end(), 
+		[](const data& a, const data& b) -> bool { return a.first < b.first;}
+		);
 
 	// push new data back into constraint
 	cons->block.clear();
 	cons->scalar.clear();
+	
 	for(const data& entry : new_data) {
 		if(cons->block.empty() || cons->block.back() != entry.first) {
 			cons->block.emplace_back(entry.first);
@@ -268,10 +271,10 @@ void builder<FieldT>::rewire_inverse(size_t idx,
 	}
 }
 
-// convert linear transfo<Field>* convert_linear_to_transform(const linear_constraint<FieldT>* const cons, const size_t block_size) {
 template<typename FieldT>
 transformation_constraint<FieldT>* convert_linear_to_transform(const linear_constraint<FieldT>* const cons, const size_t block_size) {
-transformation_constraint<FieldT>* const t_cons = new transformation_constraint<FieldT>();
+	transformation_constraint<FieldT>* const t_cons = new transformation_constraint<FieldT>();
+	
 	for(size_t pos = 0; pos < cons->block.size(); ++pos) {
 		for(size_t loc = 0; loc < block_size; ++loc) {
 			// doesn't convert scalars
@@ -284,12 +287,12 @@ transformation_constraint<FieldT>* const t_cons = new transformation_constraint<
 
 // rewire a quadratic constraint depending on what is removable
 template<typename FieldT>
-void builder<FieldT>::rewire_quadratic(size_t idx,
-		const vector<bool>& removable) {
+void builder<FieldT>::rewire_quadratic(size_t idx, const vector<bool>& removable) {
 	typedef tuple<size_t, size_t, FieldT> data;
 	vector<data> new_data;
 
 	quadratic_constraint<FieldT>* const cons = static_cast<quadratic_constraint<FieldT>*>(constraints[idx]);
+	
 	for(size_t pos = 0; pos < cons->left_block.size(); ++pos) {
 		// remove linear constraints
 		size_t old_left_block = cons->left_block[pos];
@@ -299,21 +302,20 @@ void builder<FieldT>::rewire_quadratic(size_t idx,
 		const constraint* l_cons = constraints[old_left_block];
 		const constraint* r_cons = constraints[old_right_block];
 
-		bool remove_left = removable[old_left_block] &&
-			l_cons->type == ConstraintType::linear;
-		bool remove_right = removable[old_right_block] &&
-			r_cons->type == ConstraintType::linear;
+		bool remove_left = removable[old_left_block] && l_cons->type == ConstraintType::linear;
+		bool remove_right = removable[old_right_block] && r_cons->type == ConstraintType::linear;
 
 		if(remove_left && remove_right) {
 			// both are removable linear
 			const linear_constraint<FieldT>* const l_lcons = static_cast<const linear_constraint<FieldT>*>(l_cons);
 			const linear_constraint<FieldT>* const r_lcons = static_cast<const linear_constraint<FieldT>*>(r_cons);
+			
 			for(size_t lpos =  0; lpos < l_lcons->block.size(); ++lpos) {
 				const FieldT lscalar = l_lcons->scalar[lpos];
+				
 				for(size_t rpos =  0; rpos < r_lcons->block.size(); ++rpos) {
 					const FieldT rscalar = r_lcons->scalar[rpos];
-					new_data.emplace_back(l_lcons->block[lpos], r_lcons->block[rpos],
-							(lscalar * rscalar) * old_scalar);
+					new_data.emplace_back(l_lcons->block[lpos], r_lcons->block[rpos], (lscalar * rscalar) * old_scalar);
 				}
 			}
 		} else if(remove_left || remove_right) {
@@ -353,10 +355,9 @@ void builder<FieldT>::rewire_quadratic(size_t idx,
 	cons->left_block.clear();
 	cons->right_block.clear();
 	cons->scalar.clear();
+
 	for(const data& entry : new_data) {
-		if(cons->left_block.empty() ||
-				cons->left_block.back() != std::get<0>(entry) ||
-				cons->right_block.back() != std::get<1>(entry)) {
+		if(cons->left_block.empty() || cons->left_block.back() != std::get<0>(entry) || cons->right_block.back() != std::get<1>(entry)) {
 			cons->left_block.emplace_back(std::get<0>(entry));
 			cons->right_block.emplace_back(std::get<1>(entry));
 			cons->scalar.emplace_back(std::get<2>(entry));
@@ -523,8 +524,8 @@ void builder<FieldT>::rewire_linear(const size_t idx, const vector<bool>& remova
 
 		const constraint* sub_cons = constraints[old_block];
 		if(removable[old_block] && sub_cons->type == ConstraintType::linear) {
-			const linear_constraint<FieldT>* sub_lcons =
-				static_cast<const linear_constraint<FieldT>*>(sub_cons);
+			const linear_constraint<FieldT>* sub_lcons = static_cast<const linear_constraint<FieldT>*>(sub_cons);
+			
 			// forward data from linear constraint, multiplied by scalar
 			for(size_t sub_pos = 0; sub_pos < sub_lcons->block.size(); ++sub_pos) {
 				const size_t new_block = sub_lcons->block[sub_pos];
@@ -664,14 +665,16 @@ vector<vector<FieldT>> builder<FieldT>::compute_proof_values(
 				vector<FieldT> ans(block_size, FieldT(0));
 				for(size_t idx = 0; idx < cons->block.size(); ++idx) {
 					const auto& block = get_block_vals(cons->block[idx]);
-#pragma omp parallel for
+					
+					#pragma omp parallel for
 					for(size_t loc = 0; loc < block_size; ++loc) {
 						assert(loc < block.size());
 						assert(idx < cons->scalar.size());
 						ans[loc] += (block[loc] * cons->scalar[idx]);
 					}
 				}
-#pragma omp parallel for
+
+				#pragma omp parallel for
 				for(size_t loc = 0; loc < block_size; ++loc) {
 					assert(ans[loc] != FieldT(0));
 					ans[loc] = ans[loc].inverse();
@@ -690,7 +693,8 @@ vector<vector<FieldT>> builder<FieldT>::compute_proof_values(
 				vector<FieldT> ans(block_size, FieldT(0));
 				for(size_t idx = 0; idx < cons->block.size(); ++idx) {
 					const auto& block = get_block_vals(cons->block[idx]);
-#pragma omp parallel for
+
+					#pragma omp parallel for
 					for(size_t loc = 0; loc < block_size; ++loc) {
 						ans[loc] += (block[loc] * cons->scalar[idx]);
 					}
@@ -709,7 +713,8 @@ vector<vector<FieldT>> builder<FieldT>::compute_proof_values(
 				for(size_t idx = 0; idx < cons->left_block.size(); ++idx) {
 					const auto& lblock = get_block_vals(cons->left_block[idx]);
 					const auto& rblock = get_block_vals(cons->right_block[idx]);
-#pragma omp parallel for
+
+					#pragma omp parallel for
 					for(size_t loc = 0; loc < block_size; ++loc) {
 						ans[loc] = (lblock[loc] * rblock[loc]) * cons->scalar[idx];
 					}
@@ -757,8 +762,7 @@ weightedUnionFind builder<FieldT>::calc_equivalence_classes() {
 	}
 
 	for(size_t i = 0; i < constraints.size(); ++i) {
-		if(equality_graph[i].empty())
-			continue;
+		if (equality_graph[i].empty()) continue;
 		for(size_t j : equality_graph[i]) {
 			uf.merge(i, j);
 		}
@@ -772,11 +776,10 @@ weightedUnionFind builder<FieldT>::calc_equivalence_classes() {
 
 // just filter through all the constraints we kept and replace blocks with their reps
 template<typename FieldT>
-ConstraintSystem<FieldT> builder<FieldT>::build_system(weightedUnionFind& representative,
-		const vector<bool>& removable) {
+ConstraintSystem<FieldT> builder<FieldT>::build_system(weightedUnionFind& representative, const vector<bool>& removable) {
 	// figure out how many blocks will be in our final proof
 	size_t proof_blocks = 0;
-	//size_t num_constants = 0;
+
 	for(size_t idx = 0; idx < constraints.size(); ++idx) {
 		if(!removable[idx] &&
 				constraints[idx]->type != ConstraintType::constant &&
@@ -795,12 +798,12 @@ ConstraintSystem<FieldT> builder<FieldT>::build_system(weightedUnionFind& repres
 	// some equivalence classes, the lowest block is not the representative
 	// if it's a constant instead
 	vector<vector<FieldT>> saved_constants;
+
 	for(size_t idx = 0; idx < constraints.size(); ++idx) {
 		if(constraints[idx]->type == ConstraintType::constant) {
 			if(representative.id(idx) == idx) {
 				// reserve a spot AFTER all the proof blocks
-				const constant_constraint<FieldT>* cons =
-					static_cast<const constant_constraint<FieldT>*>(constraints[idx]);
+				const constant_constraint<FieldT>* cons = static_cast<const constant_constraint<FieldT>*>(constraints[idx]);
 				eventual_location[idx] = saved_constants.size() + proof_blocks;
 				saved_constants.push_back(cons->value);
 			} else {
@@ -813,6 +816,7 @@ ConstraintSystem<FieldT> builder<FieldT>::build_system(weightedUnionFind& repres
 	// put in all the saved constants
 	cs.constant_blocks = saved_constants.size();
 	cs.constants.resize(cs.constant_blocks * block_size);
+
 	for(size_t loc = 0; loc < block_size; ++loc) {
 		for(size_t block = 0; block < cs.constant_blocks; ++block) {
 			cs.constants[loc * cs.constant_blocks + block] = saved_constants[block][loc];
@@ -844,13 +848,12 @@ ConstraintSystem<FieldT> builder<FieldT>::build_system(weightedUnionFind& repres
 			// convert inverse into quadratic
 			case ConstraintType::inverse:
 			{
-				inverse_constraint<FieldT>* inv_cons =
-					static_cast<inverse_constraint<FieldT>*>(cons);
+				inverse_constraint<FieldT>* inv_cons = static_cast<inverse_constraint<FieldT>*>(cons);
 				relabel(inv_cons->block);
-				quadratic_constraint<FieldT>* q = new quadratic_constraint<FieldT>({
-					inv_cons->block, vector<size_t>(
-							inv_cons->block.size(), eventual_location[idx])
-				});
+				quadratic_constraint<FieldT>* q = new quadratic_constraint<FieldT>(
+					{
+						inv_cons->block, vector<size_t>(inv_cons->block.size(), eventual_location[idx])
+					});
 
 				cs.constraints.push_back(q);
 				cs.targets.push_back(eventual_location[1]);

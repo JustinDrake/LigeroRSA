@@ -1,4 +1,5 @@
 #include <boost/program_options.hpp>
+#include <cstdlib>
 #include <thread>
 #include <chrono>
 
@@ -11,7 +12,7 @@
 #include "GatheringCoordinator.hpp"
 #include "SecretSharingNTT.hpp"
 
-#define NDEBUG 1
+#define NDEBUG
 
 namespace po = boost::program_options;
 
@@ -53,6 +54,9 @@ constexpr auto wait_time = 120s;
 constexpr auto cleanup_time = 5s;
 constexpr auto throughput_cutoff = 100 * 1024; /* 200 KB/s */
 
+// Number of restart
+int maxRestart = 10;
+
 // Parameters Zero-Knowledge
 // ============================
 
@@ -76,55 +80,75 @@ const hash::HashIntegerSeedGeneratorF<FieldT>& randomGenerator = hash::blake2bIn
 const hash::HashStringSeedGeneratorF& stringGenerator = hash::blake2bStringHash;
 
 // Threading
-constexpr size_t maxNumberThreads = 95; // [m5.metal has 96 threads over 48 cores]
+constexpr size_t maxNumberThreads = 90; // [m5.metal has 96 threads over 48 cores]
 
-//bool& success, 
-void verifyProof(uint8_t& success, PublicData& pdata, ligero::zksnark::FullFSTranscript<FieldT>& transcript) {
+expected<Unit> coordinateHelper(EncryptedCoordinator<uint64_t, degree, p, q>& coordinator, ZeroMQCoordinatorTransport& transport, std::string ipAddr, bool passive) {
+    // base case
+    if (maxRestart < 0) {
+        return Error::TOO_MANY_RESTART;
+    }
 
-        // Verifying
-        // ==============================================================================
-        success = 1;
+    auto result = coordinator.host(transport, &maxRestart);
+    if (hasError(result)) {
+        LOG(INFO) << showError(getError(result));
+        exit(EXIT_FAILURE);
+    }
 
-        // For portions 7 to 12, only run the first 9 moduli
-        if ((localStatement == Statements::RSACeremony)&&(pdata.modulusIdx>8)) localStatement = Statements::RSACeremony_Rounds3to6;
+    if (!passive) {
+        printAtXY(1,3,std::string("Active Security: Proof Verification Started."));
+        auto response = GatheringCoordinator::gatherAndVerifyArgumentsOfKnowledge<FieldT, uint64_t, degree, p, q>(coordinator, transport, std::string("Prod"), "ligero-simulations/Proofs", 21, false, ipAddr.c_str(), parties);
 
-        SecretData sdata;
-        zksnark::Verifier<FieldT> verifier(localStatement, irs, t, l, randomGenerator, stringGenerator, mtParams, pdata, sdata, permut<k>::compute, permut<n>::compute);
+        transport.myTimers.end(2,"1.a. Overall speed", transport.communicationCost, true);
 
-        try {
-                verifier.verifyConsolidatedZKSnarkFile(transcript);
+        // Verify failed and need to restart the protocol
+        if (hasError(response)) {
+            if (getError(response) == Error::RESTART) {
+                transport.myTimers.reset();
+                coordinator.clearPublicData();
+                printAtXY(1,1,std::string("Restarting RSA Ceremony."));
+                return coordinateHelper(coordinator, transport, ipAddr, passive);
             }
-            catch(failedTest& e) {
-                DBG("Failed Test: " << e.what());
-                success = 0;
+            else {
+                return getError(response);
             }
-            catch(internalError& e) {
-                DBG("Internal Error: " << e.what());
-                success = 0;
-            }
-            catch(...) {
-                DBG("Other Error");
-                success = 0;
-            }
-
-        return;
+        }
+        LOG(INFO) << "Verified all proofs; ceremony successful.";
+        printAtXY(1,7+firstline,std::string("Verified all proofs; ceremony successful."));
+        
+        return Unit{};
+    }
+    return Unit{};
 }
 
 /** An equivalent helper function for the coordinator side of things. */
-void coordinate (int parties, std::string ipAddr, int numCandidates, bool passive) {
+void coordinate(int parties, std::string ipAddr, int numCandidates, bool passive, ProtocolMode protocolMode) {
        
 	try {
-	    ProtocolConfig<uint64_t> config(parties, p, q, degree, sigma, lambda, tau_limit_bit, pbs);
+	    ProtocolConfig<uint64_t> config(parties, p, q, degree, sigma, lambda, tau_limit_bit, pbs, protocolMode);
+
+        system("clear");
 
         // Generate all proofs
         // =====================================================================================================================
-        auto coordinator = EncryptedCoordinator<uint64_t, degree, p, q>();
+        auto coordinator = EncryptedCoordinator<uint64_t, degree, p, q>(config);
         ZeroMQCoordinatorTransport transport(std::string("tcp://") + ipAddr + std::string(":5555"), config.numParties());
-        coordinator.host(transport, config, {duration, wait_time, cleanup_time, data_size}, throughput_cutoff);
+        printAtXY(1,1,std::string("Hosting RSA Ceremony."));
 
-        if (!passive) {
-            GatheringCoordinator::gatherAndSaveArgumentsOfKnowledge<FieldT>(transport, "Prod");
-            LOG(INFO) << "Gathered all proofs";
+        auto throughput = coordinator.hostThroughputTest(transport, {duration, wait_time, cleanup_time, data_size}, throughput_cutoff);
+        if (hasError(throughput)) {
+            if (getError(throughput) == Error::TOO_FEW_PARTIES) {
+                LOG(INFO) << "Too few parties survive throughput test. Aborting";
+            }
+            else {
+                LOG(INFO) << showError(getError(throughput));
+            }
+            exit(EXIT_FAILURE);
+        }
+
+        auto result = coordinateHelper(coordinator, transport, ipAddr, passive);
+        if (hasError(result)) {
+            LOG(INFO) << "Caught an error trying to coordinate... " << showError(getError(result));
+            exit(EXIT_FAILURE);
         }
     }
     catch (zmq::error_t& e) {
@@ -167,6 +191,7 @@ int main(int argc, char** argv)
             ("bitsize", po::value<int>(), "sets the bit size")
             ("chiStd", po::value<double>(), "sets the std distribution randomness")
             ("numcandidates", po::value<int>(), "sets the number of shares attempted per participant")
+            ("mode", po::value<std::string>(), "sets the protocol mode from normal, replay, record, normal by default")
             ("passive", "do not include a zero-knowledge argument");
 
         po::variables_map vm;
@@ -197,7 +222,20 @@ int main(int argc, char** argv)
             LOG(TRACE) << "logfile = " << logfile;
         }
 
-       if (vm.count("ip")) {
+        ProtocolMode protocolMode = ProtocolMode::NORMAL;
+        if (vm.count("mode")) {
+            std::string mode = vm["mode"].as<std::string>();
+            if (mode == "replay") {
+                protocolMode = ProtocolMode::REPLAY;
+            } else if (mode == "record") {
+                protocolMode = ProtocolMode::RECORD;
+            } else {
+                protocolMode = ProtocolMode::NORMAL;
+            }
+            LOG(TRACE) << "mode = " << mode;
+        }
+
+        if (vm.count("ip")) {
             ipAddr = vm["ip"].as<std::string>();
             LOG(TRACE) << "Coordinator resides at " << ipAddr;
         }
@@ -215,22 +253,13 @@ int main(int argc, char** argv)
 
         const int packingFactor = numCandidates;
 
-        // Configuring Easylogging
-        if (doesFileExist("logging")) {
-            el::Configurations conf("logging");
-            conf.set(el::Level::Global,el::ConfigurationType::Filename, logfile);
-            el::Loggers::reconfigureAllLoggers(conf);
-        } else {
-            el::Configurations conf;
-            conf.setToDefault();
-            conf.parseFromText("*GLOBAL:\n FORMAT = %datetime{%H:%m:%s} %msg\n TO_FILE = false\n TO_STANDARD_OUTPUT = true\n*DEBUG:\n \n TO_FILE = false\n TO_STANDARD_OUTPUT = true\n*INFO:\n \n TO_FILE = false\n TO_STANDARD_OUTPUT = true");
-            el::Loggers::reconfigureAllLoggers(conf);
-        }
+        // Configure easylogging
+        configureEasyLogging(logfile.c_str());
 
         LOG(TRACE) << std::string(120, '=');
         LOG(TRACE) << "Coordinator started.";
 
-        coordinate(numParties, ipAddr, numCandidates, passive);
+        coordinate(numParties, ipAddr, numCandidates, passive, protocolMode);
     }
     catch(std::exception& e) {
         LOG(FATAL) << "Error: " << e.what();

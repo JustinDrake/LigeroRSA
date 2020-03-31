@@ -9,12 +9,8 @@
 
 cd ../
 git submodule update --init --recursive
-cd depends/cppzmq
-git checkout fdb2f13
-cd ../..
-rm -rf build
 mkdir build
 cd build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=RELEASE
 cd src
 make -j

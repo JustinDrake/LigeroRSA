@@ -22,11 +22,6 @@ namespace hash {
     typedef std::string digest;
     typedef std::pair<size_t, hash::digest> PosAndDigest;
 
-    // template<class Archive, typename dataType>
-    // void archive(Archive& ar, std::vector<dataType> v) {
-    //     for (auto h : v) {ar & h;}
-    // }
-
     template<typename FieldT>
     struct sparseMultipleDecommitment {
         std::vector<digest>                     randomnessHashes;
@@ -42,15 +37,10 @@ namespace hash {
             template <class Archive>
             void serialize(Archive& ar, const unsigned int version)
             {
-                // archive<Archive, digest>(ar,randomnessHashes);
-                // archive<Archive, digest>(ar,auxiliaryHashes);
-                // archive<Archive, digest>(ar,contentHashes);
-                // archive<Archive, std::vector<std::vector<FieldT>>>(ar,contents);
                 ar & randomnessHashes;
                 ar & auxiliaryHashes;
                 ar & contentHashes;
                 ar & contents;
-                // ar & a;
             }
     };
 
@@ -65,7 +55,7 @@ namespace hash {
     using HashIntegerSeedGeneratorF = std::function<std::vector<unsigned char>(const hash::digest &)>;
     using HashStringSeedGeneratorF = std::function<std::vector<unsigned char>(const char *data, const size_t length)>;
 
-/* 
+    /* 
     Wrappers for Hash Functions 
     */
 
@@ -147,4 +137,17 @@ namespace hash {
 
         return result;
     }
+
+    // Utility Functions
+    std::string hashPublicData(const hash::HashStringSeedGeneratorF& hash, PublicData& pdata, SigmaProtocolPublicData& spdata) {
+        std::string msgPdata = serialize<PublicData>(pdata);
+        std::string msgSpdata = serialize<SigmaProtocolPublicData>(spdata);
+        std::string msg = msgPdata + msgSpdata;
+
+        std::vector<unsigned char> outputVector = hash(msg.c_str(), msg.size());
+        std::string out(outputVector.begin(), outputVector.end());
+
+        return out;
+    }
+
 } // namespace hash

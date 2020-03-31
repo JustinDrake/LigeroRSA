@@ -267,6 +267,11 @@ bool MT_CommitmentScheme<FieldT>::verify(const hash::digest &root, const hash::s
     /* remove possible duplicates */
     sortedPositions.erase(std::unique(sortedPositions.begin(), sortedPositions.end()), sortedPositions.end()); 
 
+    if (sortedPositions.size()!=decommitment.contents.size()) {
+        std::cout << "positions queried and content inconsistent, Fiat-Shamir inconsistent between party and verifier." << std::endl;
+        exit(1);
+    }
+
     // std::cerr << "digest1:" << (int)root[0] << std::endl;
     // std::cerr << "digest2:" << (int)decommitment.randomnessHashes[0][0] << std::endl;
     // std::cerr << "digest3:" << (int)decommitment.auxiliaryHashes[0][0] << std::endl;

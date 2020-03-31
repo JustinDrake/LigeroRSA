@@ -15,12 +15,6 @@ class 		SecretSharing {
 		SecretSharing(size_t lSecretLength, size_t kDegree, size_t nShares) : lSecretLength_(lSecretLength), kDegree_(kDegree), nNumberShares_(nShares) {
 			// In this implementation, we use an evaluation domain that is twice the size of the number of shares, and we discard
 			this->dCompositeDomainSize_ = nShares;
-
-			// // embed roots of unity
-			// rootsOfUnity_.resize(FieldT::rootsOfUnity.size());
-			// for (size_t idx = 0; idx < FieldT::rootsOfUnity.size(); idx++) {
-			// 	rootsOfUnity_[idx]= FieldT(FieldT::rootsOfUnity[idx]);
-			// }
 		};
 
 		int share(FieldT *secret);
@@ -121,20 +115,11 @@ inline int SecretSharing<FieldT>::reconstruct(FieldT *eval, bool expandedDegree)
 	size_t degree = kDegree_;
 	iFFT<FieldT>(eval, nNumberShares_, FieldT(FieldT::getOmega(nNumberShares_)), rootsOfUnity_);
 
-	// if (expandedDegree) degree = kDegree_*2; 
-	// Because we evaluate on roots of unity, we can use coefs[i] + coefs[i+k]  
-	// on k coefficients instead of a 2k evaluation
 	if (expandedDegree) {
 		for (size_t i = 0; i < kDegree_; i++) {eval[i] = eval[i] + eval[i + kDegree_];}
 	}
 
     FFT<FieldT>(eval, degree, rootsOfUnity_);
-
-	// rebuild accounting for the stride implied by the larger degree
-	// size_t stride = degree/this->kDegree_;
-	// for (size_t col = 0; col < this->lSecretLength_; col++) {
-	// 	eval[col] = eval[col*stride];
-	// }
 
 	return 0;
 }

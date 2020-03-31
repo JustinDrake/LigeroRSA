@@ -78,6 +78,7 @@ class SecretSharingInterface: SecretSharingNTT {
 		bool zeroTest(FieldT *eval, bool expanded = false);
 		bool zeroSumTestSigmaProtocol(FieldT *eval, std::vector<uint64_t> beta);
 		bool zeroSumTest(FieldT *eval);
+		FieldT sumReconstruct(FieldT *eval);
 
 	protected:
 		int padSecret(FieldT *secret);
@@ -207,6 +208,20 @@ bool SecretSharingInterface<FieldT>::zeroSumTest(FieldT *eval) {
 
 	if (sum == FieldT(0)) return true;
 	else return false;
+}
+
+template <typename FieldT>
+FieldT SecretSharingInterface<FieldT>::sumReconstruct(FieldT *eval) {
+	
+	std::vector<FieldT> localCopy(eval, eval+ this->nNumberShares_);
+	reconstruct(&localCopy[0], true);
+
+	FieldT sum = FieldT(0);
+	for (size_t i = 0; i < this->lSecretLength_; i++) {
+		sum += localCopy[i];
+	}
+
+	return sum;
 }
 
 template <typename FieldT>

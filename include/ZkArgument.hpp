@@ -27,10 +27,10 @@
 #include "protocol/Builder.hpp"
 #include "protocol/ExpressNPStatement.hpp"
 
-// #define NDEBUG
+#define NDEBUG
 
 //==============================================================================
-// ZKSnark definitions
+// ZKSnark Definitions
 #define OPEN_COLUMNS                                2
 
 #define STATE_UPDATE_LINEAR_COMBOS                  1
@@ -40,23 +40,31 @@
 #define TEST_LINEAR_INTERBLOC_CONSTRAINTS           1
 #define TEST_LINEAR_SIGMA_PROTOCOL                  2
 #define TEST_LINEAR_INTRABLOC_CONSTRAINTS           3
-#define TEST_QUADRATIC_CONSTRAINTS                  4
-#define OPEN_COLUMNS                                5
+#define TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS 4
+#define TEST_QUADRATIC_CONSTRAINTS                  5
+#define OPEN_COLUMNS                                6
 
 std::vector<std::string> testDescription = {
                 "TEST_INTERLEAVED",
                 "TEST_LINEAR_INTERBLOC_CONSTRAINTS",
                 "TEST_LINEAR_SIGMA_PROTOCOL",
                 "TEST_LINEAR_INTRABLOC_CONSTRAINTS",
+                "TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS",
                 "TEST_QUADRATIC_CONSTRAINTS",
                 "OPEN_COLUMNS"
             };
 
-//==============================================================================
-// Typed definitions
-constexpr size_t numberOfRounds = 1;
-constexpr size_t numberOfIterations = 2;
+constexpr size_t numberOfRounds                         = 1;
+constexpr size_t numberOfIterations                     = 2;
+constexpr uint8_t nbBlindingRows                        = 6;
 
+// These are the offset for the location various blinding rows from the # of rows of the main witness
+std::vector<int8_t> offsetIntrablocBlinding    = {-1,-2}; 
+std::vector<int8_t> offsetStitchingBlinding    = {-3,-4};
+std::vector<int8_t> offsetLDTBlinding          = {-5,-6}; 
+
+//==============================================================================
+// Structured Objects
 namespace ligero {
     namespace zksnark {
 
@@ -67,18 +75,6 @@ namespace ligero {
             transform(indices.begin(), indices.end(), tmp.begin(), [&](size_t index){return data[index];});
 
             return tmp;
-        }
-
-        uint64_t scaleToPrime(uint64_t input, size_t modulusIdx) {
-            double scaleFactor = static_cast<double>(params<uint64_t>::P[modulusIdx])/static_cast<double>(1ull << 62);
-            uint64_t input62 = input & ((1ull << 62) - 1);
-            return static_cast<uint64_t>(static_cast<double>(input62)*scaleFactor);
-        }
-
-        uint64_t scaleToUpperBound(uint64_t input, size_t upperBound) {
-            double scaleFactor = static_cast<double>(upperBound)/static_cast<double>(1ull << 62);
-            uint64_t input62 = input & ((1ull << 62) - 1);
-            return static_cast<uint64_t>(static_cast<double>(input62)*scaleFactor);
         }
 
         /* Data Structures */
@@ -103,7 +99,7 @@ namespace ligero {
                         randomness.resize(nrows*ncols, FieldT(0));
                         for (size_t row = 0; row < nrows; row++) {
                             for (size_t col = 0; col < ncols; col++) {
-                                randomness[row*ncols+col] = FieldT(scaleToPrime(*this->_randomness++, _modulusIdx)); 
+                                randomness[row*ncols+col] = FieldT(ligero::math::scaleToPrime(*this->_randomness++, _modulusIdx)); 
                             }
                         }
 
@@ -114,14 +110,14 @@ namespace ligero {
 
                         randomness.resize(n);
                         for (size_t idx = 0; idx < n; idx++) {
-                            randomness[idx] = FieldT(scaleToPrime(*this->_randomness++, _modulusIdx)); 
+                            randomness[idx] = FieldT(ligero::math::scaleToPrime(*this->_randomness++, _modulusIdx)); 
                         }
 
                 return 0;
                 }
 
                 int pickFieldTuple(std::vector<FieldT>& randomness) {
-                        randomness.push_back(FieldT(scaleToPrime(*this->_randomness++, _modulusIdx)));
+                        randomness.push_back(FieldT(ligero::math::scaleToPrime(*this->_randomness++, _modulusIdx)));
                 return 0;
                 }
 
@@ -129,7 +125,7 @@ namespace ligero {
 
                         randomness.resize(n);
                         for (size_t idx = 0; idx < n; idx++) {
-                                randomness[idx] = scaleToUpperBound(*this->_randomness++, upperBound); 
+                                randomness[idx] = ligero::math::scaleToUpperBound(*this->_randomness++, upperBound); 
                         }
 
                 return 0;
@@ -188,11 +184,8 @@ namespace ligero {
             std::vector<size_t> ei_early_BlocIdxs;
             std::vector<size_t> ei_BlocIdxs;
 
-            std::vector<size_t> xi_early_BlocIdxs;
-            std::vector<size_t> xi_BlocIdxs;
-
             size_t size() {
-                return(this->si_BlocIdxs.size()+this->ei_BlocIdxs.size()+this->xi_BlocIdxs.size());
+                return(this->si_BlocIdxs.size()+this->ei_BlocIdxs.size());
             }
         };
 
@@ -276,6 +269,7 @@ namespace ligero {
 
                 /* Inputs */
                 PublicData&                                      _publicData;
+                SigmaProtocolPublicData&                         _sigmaProtocolPublicData;
                 SecretData&                                      _secretData;
 
                 /* Randomness */
@@ -288,9 +282,22 @@ namespace ligero {
                 /* Size of the Constraint System Randomness */
                 size_t                                          _constraintSystemRandomnessSize;
 
+                /* Cross-Moduli References */
+                std::vector<size_t>                             _uxBlocks; 
+                std::vector<size_t>                             _uzBlocks;
+
+                std::vector<size_t>                             _eiBlocks;
+                std::vector<size_t>                             _siBlocks;
+
+                std::vector<std::vector<size_t>>                _varBlocks;
+                uint64_t                                        _stitching;
+
                 /* Bit Reverse Templates */
                 void (*_computeSmall) (uint64_t*,uint64_t const*);
                 void (*_computeLarge) (uint64_t*,uint64_t const*);
+
+                /* Maintaining a Hash */
+                std::string                                     _hashedPublicData;
 
             public:
 
@@ -309,13 +316,15 @@ namespace ligero {
             const hash::HashStringSeedGeneratorF& generatorString,
             ligero::MTParameters<FieldT>& mt,
             PublicData& pdata,
+            SigmaProtocolPublicData& spdata,
             SecretData& sdata,
             void (*computeSmall) (uint64_t*,uint64_t const*), 
-            void (*computeLarge) (uint64_t*,uint64_t const*)
-            ) : _statement(statement), _rs(irs), _t(t), _l(l), _gen(generator), _genS(generatorString), _mtParams(mt), _mtParams_early(mt), _vs(this->_randomness, pdata.modulusIdx, generator, generatorString), _publicData(pdata), _secretData(sdata), _computeSmall(computeSmall), _computeLarge(computeLarge) {
+            void (*computeLarge) (uint64_t*,uint64_t const*),
+            std::string& hashedPublicData
+            ) : _statement(statement), _rs(irs), _t(t), _l(l), _gen(generator), _genS(generatorString), _mtParams(mt), _mtParams_early(mt), _vs(this->_randomness, pdata.modulusIdx, generator, generatorString), _publicData(pdata), _sigmaProtocolPublicData(spdata), _secretData(sdata), _computeSmall(computeSmall), _computeLarge(computeLarge), _hashedPublicData(hashedPublicData) {
                 
                 // We need to increase the leaves entropy by one to account for the blinding row
-                _mtParams.leavesEntropy++;
+                // _mtParams.leavesEntropy++;
             };
 
             void cleanup() {
@@ -337,7 +346,7 @@ namespace ligero {
             // class, each object representing the relationship between two elements of the extended witness.
             // The resulting matrix (rT) x A will then be multiplied pointwise by our secret matrix U,
             // subsequently shared, with a limited number of columns being opened based on security preferences.
-            std::vector<FieldT> calculateRTAmatrix(std::vector<FieldT>& out, transformation_constraint<FieldT>& constraint, std::vector<FieldT>& rml, size_t targetBlocIdx, std::unordered_set<size_t>& processed) {
+                std::vector<FieldT> calculateRTAmatrix(std::vector<FieldT>& out, transformation_constraint<FieldT>& constraint, std::vector<FieldT>& rml, size_t targetBlocIdx, std::unordered_set<size_t>& processed) {
 
                     if (processed.find(targetBlocIdx) == processed.end()) {
                         processed.insert(targetBlocIdx);
@@ -359,22 +368,73 @@ namespace ligero {
                     return out;
                 }
 
-                template<typename T>
-                std::string serialize(T obj) {
-                    std::stringstream ss;
-                    boost::archive::binary_oarchive oa(ss);
+                std::vector<FieldT> calculateRTAStitchingMatrix(std::vector<FieldT>& out, transformation_constraint<FieldT>& constraint, std::vector<FieldT>& rml, size_t targetBlocIdx, std::unordered_set<size_t>& processed, size_t iteration) {
 
-                    oa << obj;
+                    if (constraint.stitching == LinearCombinationsStitching::StitchingNoScalar) {
 
-                    return (ss.str());
+                        // Browse through each component
+                        for (size_t idx = 0; idx < constraint.scalar.size(); idx++) {
+                            size_t sourceWidx = (constraint.block[idx] * this->_rs.n) + constraint.source_position[idx];
+
+                            out[sourceWidx] += constraint.scalar[idx];
+
+                            if (processed.find(constraint.block[idx]) == processed.end()) {
+                                processed.insert(constraint.block[idx]);
+                            }
+                        }
+                    } else {
+                        auto findVarIdx = [&](size_t index) -> std::pair<size_t,size_t> {
+                            std::pair<size_t,size_t> out;
+                            for (size_t i = 0; i < this->_varBlocks.size(); i++) {
+                                auto it = find(this->_varBlocks[i].begin(), this->_varBlocks[i].end(), index);
+
+                                if (it != this->_varBlocks[i].end()) {
+                                    out = {i,it-this->_varBlocks[i].begin()};
+                                    break;
+                                }
+                            }
+
+                            return out;
+                        };
+
+                        auto [varIdx, blockIdx]= findVarIdx(constraint.block[0]);
+
+                        if (this->_publicData.modulusIdx == 0) {
+                            // Record randomness
+                            for (size_t idx = 0; idx < constraint.scalar.size(); idx++) {
+                                size_t sourceWidx = (constraint.block[idx] * this->_rs.n) + constraint.source_position[idx];
+                                FieldT scalar(rml[(targetBlocIdx * this->_l) + constraint.target_position[idx]]);
+                                out[sourceWidx] += scalar;
+                                this->_secretData.ai[iteration][varIdx][blockIdx][constraint.source_position[idx]] = scalar.getValue();
+
+                                if (processed.find(constraint.block[idx]) == processed.end()) {
+                                    processed.insert(constraint.block[idx]);
+                                }
+                            }
+                        } else {
+                            // Use recorded randomness
+                            for (size_t idx = 0; idx < constraint.scalar.size(); idx++) {
+                                size_t sourceWidx = (constraint.block[idx] * this->_rs.n) + constraint.source_position[idx];
+
+                                out[sourceWidx] += FieldT(this->_secretData.ai[iteration][varIdx][blockIdx][constraint.source_position[idx]]);
+
+                                if (processed.find(constraint.block[idx]) == processed.end()) {
+                                    processed.insert(constraint.block[idx]);
+                                }
+                            }
+
+                        }
+                    }
+
+                    return out;
                 }
 
                 // Generate Seed from Public Data
-                std::vector<unsigned char> generateFSSeed(PublicData& pdata, FullFSTranscript<FieldT>& transcript) {
-
+                std::vector<unsigned char> generateFSSeed(FullFSTranscript<FieldT>& transcript) {
                     std::string msg;
 
-                    msg += serialize(pdata);
+                    msg += this->_hashedPublicData;
+                    msg += std::to_string(this->_publicData.modulusIdx);
                     msg += serialize(transcript[0].proverCommitment);
                     msg += serialize(transcript[0].proverDecommitment);
 
@@ -383,6 +443,7 @@ namespace ligero {
                         msg += serialize(transcript[0].proverResponsesLinearCombinations[idx][TEST_LINEAR_INTERBLOC_CONSTRAINTS]);
                         msg += serialize(transcript[0].proverResponsesLinearCombinations[idx][TEST_LINEAR_SIGMA_PROTOCOL]);
                         msg += serialize(transcript[0].proverResponsesLinearCombinations[idx][TEST_LINEAR_INTRABLOC_CONSTRAINTS]);
+                        msg += serialize(transcript[0].proverResponsesLinearCombinations[idx][TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS]);
                         msg += serialize(transcript[0].proverResponsesLinearCombinations[idx][TEST_QUADRATIC_CONSTRAINTS]);
                     }
 
@@ -391,7 +452,7 @@ namespace ligero {
 
                 void pickFiatShamirRandomness(size_t sizeRandomness, FullFSTranscript<FieldT>& transcript) {
                     
-                    std::vector<unsigned char> seed = this->generateFSSeed(this->_publicData, transcript);
+                    std::vector<unsigned char> seed = this->generateFSSeed(transcript);
                     // std::cout << "SEED:" << sizeRandomness << ":" << (int)seed[0] << "-" <<  (int)seed[1] << "-" << (int)seed[2] << std::endl;
                     // if (transcript[0].proverResponsesLinearCombinations.size()>0) {
                     //     std::cout << transcript[0].proverResponsesLinearCombinations[0].size() << std::endl;
@@ -408,11 +469,11 @@ namespace ligero {
                 }
 
                 // These will be implemented by specialized classes
-                virtual void runRound(size_t) = 0;
+                virtual void runRound(size_t, bool) = 0;
 
                 // Running the protocol
-                void runProtocol(size_t nbRounds) {
-                    for (size_t round = 0 ; round < nbRounds ; round++) runRound(round);
+                void runProtocol(size_t nbRounds, bool earlyOnly = false) {
+                    for (size_t round = 0 ; round < nbRounds ; round++) runRound(round, earlyOnly);
                 }
 
                 // Fiat-Shamir simulated verifier
@@ -571,7 +632,7 @@ namespace ligero {
                 }
 
                 // Transform
-                void intrabloc(std::vector<FieldT>& res, const std::vector<FieldT>& r, const std::vector<std::vector<FieldT>>& Uq, const vector<size_t>& Q, std::unordered_set<size_t>& processed) {
+                void intrabloc(std::vector<FieldT>& res, const std::vector<FieldT>& r, const std::vector<std::vector<FieldT>>& Uq, const vector<size_t>& Q, std::unordered_set<size_t>& processed, uint8_t iteration) {
 
                     if (res.size() == 0) {
                         res.resize(Uq.size(),FieldT(0));
@@ -581,6 +642,8 @@ namespace ligero {
                         for (size_t row : processed) {
                             res[col] += Uq[col][row]*r[Q[col] + (row*this->_rs.n)];
                         }
+
+                        res[col] += Uq[col][this->_rs.m + offsetIntrablocBlinding[iteration]];
                     }
                 }
         };
@@ -603,11 +666,13 @@ namespace ligero {
                     const hash::HashStringSeedGeneratorF& generatorString,
                     ligero::MTParameters<FieldT>& mt,
                     PublicData& pdata,
+                    SigmaProtocolPublicData& spdata,  
                     SecretData& sdata,
                     void (*computeSmall) (uint64_t*,uint64_t const*), 
                     void (*computeLarge) (uint64_t*,uint64_t const*),
-                    ligero::ZeroMQClientTransport& transport
-                    ) : NonInteractiveArgument<FieldT>(statement, irs, t, blocSize, generator, generatorString, mt, pdata, sdata, computeSmall, computeLarge), _transport(transport) {}
+                    ligero::ZeroMQClientTransport& transport,
+                    std::string& hashedPublicData
+                    ) : NonInteractiveArgument<FieldT>(statement, irs, t, blocSize, generator, generatorString, mt, pdata, spdata, sdata, computeSmall, computeLarge, hashedPublicData), _transport(transport) {}
 
                 // Compute responses
                 inline void obtainProverResponses(size_t round, size_t target, constraint *ct, int type, const vector<FieldT>& r, vector<FieldT>& rU) {
@@ -728,7 +793,7 @@ namespace ligero {
                 }
 
                 // Produce the Argument of Knowledge
-                void produceArgumentOfKnowledge(size_t nbRounds) {
+                void produceArgumentOfKnowledge(size_t nbRounds, bool earlyCommitmentOnly) {
 
                     this->_myTimer.initialize_timer();
                     this->_myTimer.begin(1,"Producing Proof",0);
@@ -755,7 +820,7 @@ namespace ligero {
                             builder<FieldT> helper(this->_l);
                             vector<vector<FieldT>> earlyCommitments2DVector;
 
-                            expressNPStatement<FieldT> expressStatementEarlyCommitment(this->_publicData, this->_secretData, helper, &earlyCommitments2DVector, this->_l, this->_randomness);
+                            expressNPStatement<FieldT> expressStatementEarlyCommitment(this->_publicData, this->_sigmaProtocolPublicData, this->_secretData, helper, &earlyCommitments2DVector, this->_l, this->_randomness);
                             expressStatementEarlyCommitment.buildConstraintSet(Statements::RSACeremony_EarlyCommitments);
 
                             this->_myTimer.begin(3,"compile",0);
@@ -764,18 +829,16 @@ namespace ligero {
 
                             // Dimensioning the circuit accordingly
                             // We reserve one additional row for blinding
-                            this->_mtParams_early.leavesEntropy = this->_rs.m = earlyCommitments2DVector.size() + this->_constraints_early.constant_blocks + 1;
+                            this->_mtParams_early.leavesEntropy = this->_rs_early.m = earlyCommitments2DVector.size() + this->_constraints_early.constant_blocks + 1;
 
                             // Record Position of Variables in the Witness
                             this->_splitWitness.si_early_BlocIdxs = assessBlocIdx(helper, expressStatementEarlyCommitment._siCoefsBlocIds);
                             this->_splitWitness.ei_early_BlocIdxs = assessBlocIdx(helper, expressStatementEarlyCommitment._eiCoefsBlocIds);
-                            this->_splitWitness.xi_early_BlocIdxs = assessBlocIdx(helper, expressStatementEarlyCommitment._xiCoefsBlocIds);
 
                         // Embedding the early commit witness
                         // ==================================
 
                             this->_myTimer.begin(3,"Embedding the early extended witness",0);
-                            this->_rs_early.m = earlyCommitments2DVector.size() + this->_constraints_early.constant_blocks + 1;
                             
                             // Migrate the extended witness to an expandable matrix
                             FieldT *earlyWitnessCArray = new FieldT[this->_rs_early.n * this->_rs_early.m] {FieldT(0)};
@@ -803,39 +866,62 @@ namespace ligero {
                             this->_myTimer.end(2,"Build Extended Witness & Constraint System For Early Commitment",0);
                     }
 
+                    if (earlyCommitmentOnly) {
+                        // Dimension Randomness for the Constraint System
+                        this->_constraintSystemRandomnessSize = determineCSrandomnessSize(this->_statement, this->_publicData.ptNumberEvaluation);
+
+                        this->_myTimer.begin(2,"Generating the Proof",0);
+                        this->runProtocol(nbRounds, earlyCommitmentOnly);
+                        this->_myTimer.end(2,"Generating the Proof",0);
+
+                        return;
+                    }
+
                     // Building the constraint system and populating the extended witness
                     // ==================================================================
 
                         this->_myTimer.begin(2,"Build Extended Witness & Constraint System",0);
-
-                        builder<FieldT> bob(this->_l);
                         vector<vector<FieldT>> extendedWitness2DVector;
 
-                        this->_myTimer.begin(3,"Express NP statement",0);
-                        expressNPStatement<FieldT> expressStatement(this->_publicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
-                        expressStatement.buildConstraintSet(this->_statement, false);
-                        this->_myTimer.end(3,"Express NP statement",0);
+                        {
+                            builder<FieldT> bob(this->_l);
 
-                        this->_myTimer.begin(3,"compile",0);
-                        this->_constraints = bob.compile(extendedWitness2DVector);                // Main functionality to retain
-                        this->_myTimer.end(3,"compile",0);
+                            this->_myTimer.begin(3,"Express NP statement",0);
+                            expressNPStatement<FieldT> expressStatement(this->_publicData, this->_sigmaProtocolPublicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
+                            expressStatement.buildConstraintSet(this->_statement, false);
+                            this->_myTimer.end(3,"Express NP statement",0);
 
-                        this->_myTimer.end(2,"Build Extended Witness & Constraint System",0);
-                        DBG(this->_constraints.constraints.size());
+                            this->_myTimer.begin(3,"compile",0);
+                            this->_constraints = bob.compile(extendedWitness2DVector);                // Main functionality to retain
+                            this->_myTimer.end(3,"compile",0);
 
-                        // Details of the witness constructed
-                        DBG("witness rows:" << extendedWitness2DVector.size());
-                        DBG("witness cols:" << extendedWitness2DVector[0].size());
+                            this->_myTimer.end(2,"Build Extended Witness & Constraint System",0);
+                            DBG(this->_constraints.constraints.size());
 
-                        // Dimensioning the circuit accordingly
-                        // We reserve one additional row for blinding
-                        this->_mtParams.leavesEntropy = this->_rs.m = extendedWitness2DVector.size() + this->_constraints.constant_blocks + 1;
+                            // Details of the witness constructed
+                            // We need to add 
+                            DBG("witness rows:" << extendedWitness2DVector.size());
+                            DBG("witness cols:" << extendedWitness2DVector[0].size());
+                            this->_mtParams.leavesEntropy = this->_rs.m = extendedWitness2DVector.size() + this->_constraints.constant_blocks + nbBlindingRows;
 
-                        if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
-                            // Record Position of Variables in the Witness
-                            this->_splitWitness.si_BlocIdxs = assessBlocIdx(bob, expressStatement._siCoefsBlocIds);
-                            this->_splitWitness.ei_BlocIdxs = assessBlocIdx(bob, expressStatement._eiCoefsBlocIds);
-                            this->_splitWitness.xi_BlocIdxs = assessBlocIdx(bob, expressStatement._xiCoefsBlocIds);
+                            if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
+                                // Record Position of Variables in the Witness
+                                this->_splitWitness.si_BlocIdxs = assessBlocIdx(bob, expressStatement._siCoefsBlocIds);
+                                this->_splitWitness.ei_BlocIdxs = assessBlocIdx(bob, expressStatement._eiCoefsBlocIds);
+                            }
+
+                            // Here checking that we got the referencing right
+                            this->_uxBlocks = assessBlocIdx(bob, expressStatement._uxBlocs);
+                            this->_uzBlocks = assessBlocIdx(bob, expressStatement._uzBlocs);
+
+                            this->_siBlocks = assessBlocIdx(bob, expressStatement._siBlocs);
+                            this->_eiBlocks = assessBlocIdx(bob, expressStatement._eiBlocs);
+
+                            // Storing for Cross-Moduli Integrity Checking
+                            this->_varBlocks.emplace_back(this->_siBlocks);
+                            this->_varBlocks.emplace_back(this->_eiBlocks);
+                            this->_varBlocks.emplace_back(this->_uxBlocks);
+                            this->_varBlocks.emplace_back(this->_uzBlocks);
                         }
 
                     // Embedding the extended witness
@@ -855,7 +941,7 @@ namespace ligero {
                             }
 
                             // Add public constants
-                            size_t topConstantRow = this->_rs.m - this->_constraints.constant_blocks - 1;   // Accounting for constants and blinding row
+                            size_t topConstantRow = this->_rs.m - this->_constraints.constant_blocks - nbBlindingRows;   // Accounting for constants and blinding row
                             for (size_t row = 0; row < this->_constraints.constant_blocks; row++) {
                                 for (size_t col = 0; col < this->_l; col++) {
                                     extendedWitnessCArray[(topConstantRow + row)*this->_rs.n + col] = this->_constraints.constants[col*this->_constraints.constant_blocks + row];
@@ -989,34 +1075,25 @@ namespace ligero {
                         target++;
                     }
                     #endif
+                
+                // Generating and sending the proof
+                // ================================
 
-                    // Generating and sending the proof
-                    // ================================
+                    // Dimension Randomness for the Constraint System
+                    this->_constraintSystemRandomnessSize = determineCSrandomnessSize(this->_statement, this->_publicData.ptNumberEvaluation);
 
-                        // Send Public Data over 
-                        if (this->_publicData.modulusIdx == 0) {
+                    this->_myTimer.begin(2,"Generating the Proof",0);
+                    this->runProtocol(nbRounds, earlyCommitmentOnly);
+                    this->_myTimer.end(2,"Generating the Proof",0);
 
-                            std::optional<MessageType> msg = _transport.awaitReply();
-                            assert(msg == MessageType::GATHER_PUBLIC_DATA);
+                    this->_myTimer.begin(2,"Sending the Proof",0);
+                    this->sendArgumentOfKnowledge();
+                    this->_myTimer.end(2,"Sending the Proof",0);
 
-                            _transport.send(MessageType::GATHER_PUBLIC_DATA, this->_publicData);
-                        }
+                    // Clean Up
+                    delete[] extendedWitnessCArray;
 
-                        // Dimension Randomness for the Constraint System
-                        this->_constraintSystemRandomnessSize = determineCSrandomnessSize(this->_statement, this->_publicData.ptNumberEvaluation);
-
-                        this->_myTimer.begin(2,"Generating the Proof",0);
-                        this->runProtocol(nbRounds);
-                        this->_myTimer.end(2,"Generating the Proof",0);
-
-                        this->_myTimer.begin(2,"Sending the Proof",0);
-                        this->sendArgumentOfKnowledge();
-                        this->_myTimer.end(2,"Sending the Proof",0);
-
-                        // Clean Up
-                        delete[] extendedWitnessCArray;
-
-                        this->_myTimer.end(1,"Producing Proof",0);
+                    this->_myTimer.end(1,"Producing Proof",0);
 
                 }
 
@@ -1029,57 +1106,89 @@ namespace ligero {
                         DBG(this->_transcript[0].proverResponsesLinearCombinations[0][TEST_LINEAR_INTERBLOC_CONSTRAINTS].size());
                         DBG(this->_transcript[0].proverResponsesLinearCombinations[0][TEST_LINEAR_SIGMA_PROTOCOL].size());
                         DBG(this->_transcript[0].proverResponsesLinearCombinations[0][TEST_LINEAR_INTRABLOC_CONSTRAINTS].size());
+                        DBG(this->_transcript[0].proverResponsesLinearCombinations[0][TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS].size());
                         DBG(this->_transcript[0].proverResponsesLinearCombinations[0][TEST_QUADRATIC_CONSTRAINTS].size());
                     #endif
 
                     // Send Data and the argument to the Coordinator
 
                     if (this->_publicData.modulusIdx == 0) {
-                        std::optional<MessageType> msg = _transport.awaitReply();
-                        assert(msg == MessageType::GATHER_PROOFS);
+                        auto msg = _transport.awaitReply();
+                        if (hasError(msg)) {
+                            throw std::runtime_error(showError(getError(msg)));
+                        }
+                        assert(getResult(msg) == MessageType::GATHER_PROOFS);
                     }
 
                     _transport.send(MessageType::GATHER_PROOFS, this->_transcript); 
                 }
 
-                void addBlindingRow() {
+                // This section will add multiple blinding rows:
+                    // two for LDT testing
+                    // two for regular intra-bloc constraints
+                    // two for stitching proofs together
+                void addBlindingRows() {
+
+                    for (uint8_t blindingRowIdx = 0; blindingRowIdx < nbBlindingRows; blindingRowIdx++) {
                         std::vector<FieldT> blindingRow(this->_l);
-                    	FieldT::randomVector(&blindingRow[0], this->_l - 1, true);
+                    	
+                        FieldT::randomVector(&blindingRow[0], this->_l - 1, true);
                         FieldT sum = FieldT(0);
-
-                        for (size_t idx = 0; idx < this->_l; idx++) {sum += blindingRow[idx];}
-
+                        for (size_t idx = 0; idx < this->_l - 1; idx++) {sum += blindingRow[idx];}
                         blindingRow[this->_l - 1] = FieldT(0) - sum;
-                        memcpy(this->_w + ((this->_rs.m - 1) * this->_rs.n), (const void *)&blindingRow[0], this->_l * sizeof(FieldT));
+
+                        memcpy(this->_w + ((this->_rs.m - blindingRowIdx - 1) * this->_rs.n), (const void *)&blindingRow[0], this->_l * sizeof(FieldT));
+                    }
                 }
 
-                void runRound(size_t round) {
-
+                void runRound(size_t round, bool earlyOnly) {
+                    
                     // Expand the transcript
                     this->_transcript.emplace_back(roundFSTranscript<FieldT>());
-
-                    // Adding blinding
-                    addBlindingRow();
 
                     // Initialize secret sharing interface
                     ligero::SecretSharingInterface<FieldT> localSecretSharing(this->_publicData.modulusIdx, (size_t)this->_l, (size_t)this->_rs.k, (size_t)this->_rs.n, this->_computeSmall, this->_computeLarge);
 
                     // Have the "Verifier" pick randomness for all tests according to the Fiat-Shamir transform
-                    std::vector<FieldT> interleaved_r, interleaved_r_early, linearConstraintsInterBloc_r, quadraticConstraints_r, linearConstraintsSigma_r, linearConstraintsIntraBloc_ri;
+                    std::vector<FieldT> interleaved_r, interleaved_r_early, linearConstraintsInterBloc_r, quadraticConstraints_r, linearConstraintsIntraBloc_ri, linearConstraintsSigma_r, linearConstraintsStitchingIntraBloc_ri;
+
+                    // Early witness
+                    // ========================================================================================
 
                     if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
 
                         this->_myTimer.begin(3,"Sharing early witness",0);
 
-                        // Pad the extended witness with randomness
+                        // Pad the early witness with randomness
                         localSecretSharing.padMany(this->_w_early, this->_rs_early.m);
 
-                        // Share the extended witness
+                        // Share the early witness
                         localSecretSharing.shareMany(this->_w_early, this->_rs_early.m);
 
                         this->_myTimer.end(3,"Sharing early witness",0);
-
                     }
+
+                    // Commit to the early witness
+                    ProverColumnCS<FieldT> proverCCS_early(this->_mtParams_early, this->_w_early);
+
+                    if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
+
+                        // Merkel Tree Commitment
+                        this->_myTimer.begin(3,"Commit Early Witness MT",0);
+
+                        this->_transcript[round].proverCommitment_early = proverCCS_early.performInitialCommit(this->_w_early);
+
+                        this->_myTimer.end(3,"Commit Early Witness MT",0);
+                    }
+
+                    // End here if all we wanted was the early commitment
+                    if (earlyOnly) return;
+
+                    // Moving on to the main witness
+                    // ========================================================================================
+
+                    // Adding blinding
+                    addBlindingRows();
 
                     this->_myTimer.begin(3,"Sharing witness",0);
 
@@ -1094,13 +1203,6 @@ namespace ligero {
                     // Merkel Tree Commitment
                     this->_myTimer.begin(3,"Commit MT",0);
 
-                    // Commit to the extended witness
-                    ProverColumnCS<FieldT> proverCCS_early(this->_mtParams_early, this->_w_early);
-
-                    if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
-                        this->_transcript[round].proverCommitment_early = proverCCS_early.performInitialCommit(this->_w_early);
-                    }
-
                     ProverColumnCS<FieldT> proverCCS(this->_mtParams, this->_w);
                     this->_transcript[round].proverCommitment = proverCCS.performInitialCommit(this->_w);
 
@@ -1111,6 +1213,7 @@ namespace ligero {
 
                     // Estimate All Randomness
                     size_t sizeRandomness = this->_rs.m;   // LDT testing
+                    
                     if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
                         sizeRandomness += this->_rs_early.m + this->_splitWitness.size();
                     }
@@ -1143,9 +1246,9 @@ namespace ligero {
 
                     this->_myTimer.end(3,"Estimate Randomness",0);
 
-                    for (size_t iteration = 0; iteration <numberOfIterations; iteration++) {
+                    for (size_t iteration = 0; iteration < numberOfIterations; iteration++) {
 
-                        std::vector<FieldT> interleaved_rU, linearConstraintsInterBloc_rU, linearConstraintsSigma_rU, linearConstraintsIntraBloc_riU, quadraticConstraints_rU;
+                        std::vector<FieldT> interleaved_rU, linearConstraintsInterBloc_rU, linearConstraintsSigma_rU, linearConstraintsIntraBloc_riU, linearConstraintsStitchingIntraBloc_riU, quadraticConstraints_rU;
                         std::unordered_map<size_t, std::vector<FieldT> > linearCombinations;
                         
                         // Update the state (= establish a new seed for Fiat-Shamir randomness) and pick all randomness in a bulk
@@ -1164,7 +1267,7 @@ namespace ligero {
                             vector<vector<FieldT>> extendedWitness2DVector;
 
                             this->_myTimer.begin(3,"Express NP statement",0);
-                            expressNPStatement<FieldT> expressStatement(this->_publicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
+                            expressNPStatement<FieldT> expressStatement(this->_publicData, this->_sigmaProtocolPublicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
                             expressStatement.buildConstraintSet(this->_statement);
                             this->_myTimer.end(3,"Express NP statement",0);
 
@@ -1187,13 +1290,13 @@ namespace ligero {
                         }
 
                         // transformation constraints, sparse randomness
-                        std::unordered_set<size_t> processed;
+                        std::unordered_set<size_t> processed, processedStitched;
                         std::vector<FieldT> localRandomness;
                         
                         // Testing constraints
                         size_t target = 0;
 
-                        // Intrabloc constraints
+                        // Intrabloc constraints only when there are transformations
                         if (hasTransformation) {
                             this->_myTimer.begin(3,"Pick Randomness",0);
                             this->pickVerifierChallenges(round, TEST_LINEAR_INTRABLOC_CONSTRAINTS, localRandomness, this->_rs.m);
@@ -1201,6 +1304,9 @@ namespace ligero {
 
                             linearConstraintsIntraBloc_ri.assign(this->_rs.n*this->_rs.m,FieldT(0));
                             }
+
+                        // Stitching constraints for all moduli
+                        linearConstraintsStitchingIntraBloc_ri.assign(this->_rs.n*this->_rs.m,FieldT(0));
 
                         this->_myTimer.begin(3,"Linear Combinations for Constraints Testing",0);
 
@@ -1228,7 +1334,11 @@ namespace ligero {
                                         transformation_constraint<FieldT> transfCt = *static_cast<const transformation_constraint<FieldT>*>(constraint);
 
                                         this->_myTimer.begin(3,"Calc Matrix",0);
-                                        this->calculateRTAmatrix(linearConstraintsIntraBloc_ri, transfCt, localRandomness, this->_constraints.targets[target], processed);
+                                        if (transfCt.stitching == LinearCombinationsStitching::Regular) {                                        
+                                            this->calculateRTAmatrix(linearConstraintsIntraBloc_ri, transfCt, localRandomness, this->_constraints.targets[target], processed);
+                                        } else {
+                                            this->calculateRTAStitchingMatrix(linearConstraintsStitchingIntraBloc_ri, transfCt, localRandomness, this->_constraints.targets[target], processedStitched, iteration);
+                                        }
                                         this->_myTimer.end(3,"Calc Matrix",0);
                                         // std::cout << "tactical,provera,ri," << linearConstraintsIntraBloc_ri[30 + (0*this->_rs.n)].getValue() << std::endl;
                                     }
@@ -1253,7 +1363,7 @@ namespace ligero {
 
                         auto vectorInterBloc = [&](std::vector<FieldT>& linearConstraintsInterBloc_rU, const std::vector<size_t>& v_early, const std::vector<size_t>& v) -> void {
                             for (size_t idx = 0; idx < v.size(); idx++) {
-                                this->splitWitnessInterbloc(linearConstraintsInterBloc_rU,v_early[idx], v[idx],FieldT(scaleToPrime(*this->_randomness++, this->_publicData.modulusIdx)),this->_w_early, this->_w);
+                                this->splitWitnessInterbloc(linearConstraintsInterBloc_rU,v_early[idx], v[idx],FieldT(ligero::math::scaleToPrime(*this->_randomness++, this->_publicData.modulusIdx)),this->_w_early, this->_w);                            
                             }
                         };
 
@@ -1263,7 +1373,6 @@ namespace ligero {
                         if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
                             vectorInterBloc(linearConstraintsInterBloc_rU, this->_splitWitness.si_early_BlocIdxs,this->_splitWitness.si_BlocIdxs);
                             vectorInterBloc(linearConstraintsInterBloc_rU, this->_splitWitness.ei_early_BlocIdxs,this->_splitWitness.ei_BlocIdxs);
-                            vectorInterBloc(linearConstraintsInterBloc_rU, this->_splitWitness.xi_early_BlocIdxs,this->_splitWitness.xi_BlocIdxs);
                         }
 
                         this->_myTimer.end(3,"Linear Combinations for Constraints Testing",0);
@@ -1290,8 +1399,52 @@ namespace ligero {
                                 }
                             }
 
-                            // std::cout << "tactical,proverf,ri," << linearConstraintsIntraBloc_ri[30 + (0*this->_rs.n)].getValue() << std::endl;
+                            // Adding Blinding
+                            for (size_t col = 0; col < this->_rs.n; col++) {
+                                linearConstraintsIntraBloc_riU[col] += this->_w[col + ((this->_rs.m + offsetIntrablocBlinding[iteration])*this->_rs.n)];
+                            }
 
+                            #ifndef NDEBUG
+                            // Sanity check
+                            std::vector<FieldT> check;
+                            for (size_t col = 0; col < this->_rs.n; col++) {
+                                check.push_back(this->_w[col + ((this->_rs.m + offsetIntrablocBlinding[iteration])*this->_rs.n)]);
+                            }
+
+                            localSecretSharing.reconstruct(&check[0], false);
+
+                            FieldT sanityCheck(0);
+                            for (size_t col = 0; col < this->_l; col++) {
+                                sanityCheck += check[col];
+                            }
+
+                            assert(sanityCheck == FieldT(0));
+                            #endif
+
+                        }
+
+                        if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6))
+                        {
+                            // Perform linear combinations
+                            linearConstraintsStitchingIntraBloc_riU.resize(this->_rs.n,FieldT(0));
+
+                            for (size_t row : processedStitched) {
+
+                                // Pad randomness
+                                localSecretSharing.padIntrablocRandomness(&linearConstraintsStitchingIntraBloc_ri[this->_rs.n*row]);
+
+                                // Secret Share Randomness First
+                                localSecretSharing.share(&linearConstraintsStitchingIntraBloc_ri[this->_rs.n*row]);
+
+                                for (size_t col = 0; col < this->_rs.n; col++) {
+                                    linearConstraintsStitchingIntraBloc_riU[col] += this->_w[col + (row*this->_rs.n)]*linearConstraintsStitchingIntraBloc_ri[col + (row*this->_rs.n)];
+                                }
+                            }
+
+                            // Adding Blinding
+                            for (size_t col = 0; col < this->_rs.n; col++) {
+                                linearConstraintsStitchingIntraBloc_riU[col] += this->_w[col + ((this->_rs.m + offsetStitchingBlinding[iteration])*this->_rs.n)];
+                            }
                         }
 
                         this->_myTimer.end(3,"Sharing + linear combination intrabloc randomness",0);
@@ -1303,10 +1456,12 @@ namespace ligero {
                         linearCombinations.insert(std::pair<int, std::vector<FieldT>>(TEST_INTERLEAVED, interleaved_rU));
                         linearCombinations.insert(std::pair<int, std::vector<FieldT>>(TEST_LINEAR_INTERBLOC_CONSTRAINTS, linearConstraintsInterBloc_rU));
                         linearCombinations.insert(std::pair<int, std::vector<FieldT>>(TEST_LINEAR_SIGMA_PROTOCOL, linearConstraintsSigma_rU));
+                        linearCombinations.insert(std::pair<int, std::vector<FieldT>>(TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS, linearConstraintsStitchingIntraBloc_riU));
                         linearCombinations.insert(std::pair<int, std::vector<FieldT>>(TEST_LINEAR_INTRABLOC_CONSTRAINTS, linearConstraintsIntraBloc_riU));
                         linearCombinations.insert(std::pair<int, std::vector<FieldT>>(TEST_QUADRATIC_CONSTRAINTS, quadraticConstraints_rU));
                         this->_transcript[round].proverResponsesLinearCombinations.emplace_back(linearCombinations);
 
+                        #ifndef NDEBUG
                         // Display Randomness
                         displayVector(",Prover,local, Verifier LDT Combinations Challenge:", interleaved_r);
                         displayVector(",Prover,local, Verifier Linear Interbloc Constraints Combinations Challenge:", linearConstraintsInterBloc_r);
@@ -1316,9 +1471,11 @@ namespace ligero {
                         // Display Linear Combinations
                         displayVector(",Prover,transcript, Prover LDT Response:", interleaved_rU);
                         displayVector(",Prover,transcript, Prover Interbloc Constraints Response:", linearConstraintsInterBloc_rU);
+                        displayVector(",Prover,transcript, Prover Intrabloc Stitching Constraints Response:", linearConstraintsStitchingIntraBloc_riU);
                         displayVector(",Prover,transcript, Prover Sigma Protocol Constraints Response:", linearConstraintsSigma_rU);
                         displayVector(",Prover,transcript, Prover Intrabloc Constraints Response:", linearConstraintsIntraBloc_riU);
                         displayVector(",Prover,transcript, Prover Quadratic Constraints Response:", quadraticConstraints_rU);
+                        #endif
 
                         // Free Randomness
                         free (this->_alloc);
@@ -1397,10 +1554,12 @@ namespace ligero {
                     const hash::HashStringSeedGeneratorF& generatorString,
                     ligero::MTParameters<FieldT>& mt,
                     PublicData& pdata,
+                    SigmaProtocolPublicData& spdata,
                     SecretData& sdata,
                     void (*computeSmall) (uint64_t*,uint64_t const*), 
-                    void (*computeLarge) (uint64_t*,uint64_t const*)
-                    ) : _l(blockSize), NonInteractiveArgument<FieldT>(statement, irs, t, blockSize, generator, generatorString, mt, pdata, sdata, computeSmall, computeLarge) {
+                    void (*computeLarge) (uint64_t*,uint64_t const*),
+                    std::string& hashedPublicData
+                    ) : _l(blockSize), NonInteractiveArgument<FieldT>(statement, irs, t, blockSize, generator, generatorString, mt, pdata, spdata, sdata, computeSmall, computeLarge, hashedPublicData) {
                         
                         // By definition, the verifier does not have access to the secret data
                         this->_secretData.isAvailable = false;
@@ -1423,7 +1582,10 @@ namespace ligero {
                         case TEST_LINEAR_INTRABLOC_CONSTRAINTS:
                             success = secretSharing.zeroSumTest(&rU[0]);
                             break;
-                        case TEST_QUADRATIC_CONSTRAINTS:
+                        case TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS:
+                            this->_stitching = secretSharing.sumReconstruct(&rU[0]).getValue();
+                            break;
+                       case TEST_QUADRATIC_CONSTRAINTS:
                             success = secretSharing.zeroTest(&rU[0], true);
                             break;
                         default:
@@ -1461,7 +1623,7 @@ namespace ligero {
                     else throw failedTest((std::string("consistency check failed:") + testDescription[TEST_INTERLEAVED]).c_str());
                 }
 
-                void linearCombinationPerConstraint(int type, std::vector<FieldT>& c_rUq, std::vector<FieldT>& r, const vector<size_t>& Q, const std::vector<std::vector<FieldT>>& Uq, std::unordered_set<size_t>& processed) {
+                void linearCombinationPerConstraint(int type, std::vector<FieldT>& c_rUq, std::vector<FieldT>& r, const vector<size_t>& Q, const std::vector<std::vector<FieldT>>& Uq, std::unordered_set<size_t>& processed, uint8_t iteration) {
 
                     // Have The Secret Sharing Interface Ready
                     ligero::SecretSharingInterface<FieldT> localSecretSharing(this->_publicData.modulusIdx, (size_t)this->_l, (size_t)this->_rs.k, (size_t)this->_rs.n, this->_computeSmall, this->_computeLarge);
@@ -1471,7 +1633,7 @@ namespace ligero {
                         localSecretSharing.share(&r[0]+(idx*this->_rs.n));
                     }
 
-                    this->intrabloc(c_rUq, r, Uq, Q, processed);
+                    this->intrabloc(c_rUq, r, Uq, Q, processed, iteration);
                 }
 
                 void linearCombinationPerConstraint(int type, std::vector<FieldT>& c_rUq, constraint* ct, size_t target, const FieldT& r, const vector<size_t>& Q, const std::vector<std::vector<FieldT>>& Uq) {
@@ -1496,7 +1658,7 @@ namespace ligero {
                 }
 
                 // Run the protocol
-                void runRound(size_t round) {
+                void runRound(size_t round, bool earlyOnly) {
                     // Have The Secret Sharing Interface Ready
                     ligero::SecretSharingInterface<FieldT> localSecretSharing(this->_publicData.modulusIdx, (size_t)this->_l, (size_t)this->_rs.k, (size_t)this->_rs.n, this->_computeSmall, this->_computeLarge);
 
@@ -1600,16 +1762,23 @@ namespace ligero {
                     // Free Randomness
                     free (this->_alloc);
 
+                    DBG("Verifying decommitment root for main witness.");
+
                     // Now verify the decommitment vs. initial commitment
                     if (!verifierCCS.verify(replicatingTranscript.back().proverCommitment,transcriptRound.proverDecommitment, replicatingTranscript.back().verifierColumnQueries)) {
                         throw failedTest("openColumns|contents");
                     }
+
+                    DBG("Verification successful for decommitment root for main witness.");
+                    DBG("Verifying decommitment root for early witness.");
 
                     if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
                         if (!verifierCCS_early.verify(replicatingTranscript.back().proverCommitment_early,transcriptRound.proverDecommitment_early, replicatingTranscript.back().verifierColumnQueries)) {
                             throw failedTest("openColumns|contents");
                         }
                     }
+
+                    DBG("Verification successful for decommitment root for early witness.");
 
                     // The transcript is already populated, see what we read in
                     std::vector<std::vector<FieldT>>& Uq = transcriptRound.proverDecommitment.contents;
@@ -1650,7 +1819,7 @@ namespace ligero {
                             vector<vector<FieldT>> extendedWitness2DVector;
 
                             this->_myTimer.begin(3,"Express NP statement",0);
-                            expressNPStatement<FieldT> expressStatement(this->_publicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
+                            expressNPStatement<FieldT> expressStatement(this->_publicData, this->_sigmaProtocolPublicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
                             expressStatement.buildConstraintSet(this->_statement);
                             this->_myTimer.end(3,"Express NP statement",0);
 
@@ -1660,12 +1829,13 @@ namespace ligero {
                         }
 
                         // Have the "Verifier" pick randomness for all tests according to the Fiat-Shamir transform
-                        std::vector<FieldT> interleaved_r,interleaved_r_early,linearConstraintsInterBloc_r,quadraticConstraints_r, linearConstraintsSigma_r, linearConstraintsIntraBloc_ri;
+                        std::vector<FieldT> interleaved_r,interleaved_r_early,linearConstraintsInterBloc_r,quadraticConstraints_r, linearConstraintsSigma_r, linearConstraintsIntraBloc_ri, linearConstraintsStitchingIntraBloc_ri;
 
                         // Read provers' responses from the transcript
                         std::vector<FieldT>& interleaved_rU = transcriptRound.proverResponsesLinearCombinations[iteration][TEST_INTERLEAVED];
                         std::vector<FieldT>& linearConstraintsInterBloc_rU = transcriptRound.proverResponsesLinearCombinations[iteration][TEST_LINEAR_INTERBLOC_CONSTRAINTS];
                         std::vector<FieldT>& linearConstraintsSigma_rU = transcriptRound.proverResponsesLinearCombinations[iteration][TEST_LINEAR_SIGMA_PROTOCOL];
+                        std::vector<FieldT>& linearConstraintsStitchingIntraBloc_riU = transcriptRound.proverResponsesLinearCombinations[iteration][TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS];
                         std::vector<FieldT>& linearConstraintsIntraBloc_riU = transcriptRound.proverResponsesLinearCombinations[iteration][TEST_LINEAR_INTRABLOC_CONSTRAINTS];
                         std::vector<FieldT>& quadraticConstraints_rU = transcriptRound.proverResponsesLinearCombinations[iteration][TEST_QUADRATIC_CONSTRAINTS];
 
@@ -1674,6 +1844,7 @@ namespace ligero {
                         assert((linearConstraintsInterBloc_rU.size() == this->_rs.n)||(linearConstraintsInterBloc_rU.size() == 0));
                         assert((linearConstraintsSigma_rU.size() == this->_rs.n)||(linearConstraintsSigma_rU.size() == 0));
                         assert((linearConstraintsIntraBloc_riU.size() == this->_rs.n)||(linearConstraintsIntraBloc_riU.size() == 0));
+                        assert((linearConstraintsStitchingIntraBloc_riU.size() == this->_rs.n)||(linearConstraintsStitchingIntraBloc_riU.size() == 0));
                         assert((quadraticConstraints_rU.size() == this->_rs.n)||(quadraticConstraints_rU.size() == 0));
 
                         // Pick Randomness for Low Degree Testing
@@ -1692,8 +1863,11 @@ namespace ligero {
 
                         // Testing constraints
                         size_t target = 0;
-                        std::unordered_set<size_t> processed;
+                        std::unordered_set<size_t> processed, processedStitched;
                         std::vector<FieldT> localRandomness;
+                        if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
+                            linearConstraintsStitchingIntraBloc_ri.assign(this->_rs.n*this->_rs.m,FieldT(0));
+                        }
 
                         // Intrabloc constraints
                         if (hasTransformation) {
@@ -1709,18 +1883,17 @@ namespace ligero {
                             switch (constraint->type) {
 
                                 case linear:
-                                    if (static_cast<linear_constraint<FieldT>*>(constraint)->flag == LinearConstraintFlag::SigmaProtocol) {
-                                        linearConstraintsSigma_r.emplace_back(1);
-                                    } else {
-                                        this->pickVerifierChallenges(round, TEST_LINEAR_INTERBLOC_CONSTRAINTS, linearConstraintsInterBloc_r, this->_rs.m);
-                                    }
+                                    this->pickVerifierChallenges(round, TEST_LINEAR_INTERBLOC_CONSTRAINTS, linearConstraintsInterBloc_r, this->_rs.m);
                                     break;
 
                                 case transformation:
                                     {
                                         transformation_constraint<FieldT> transfCt = *static_cast<const transformation_constraint<FieldT>*>(constraint);
-                                        this->calculateRTAmatrix(linearConstraintsIntraBloc_ri, transfCt, localRandomness, this->_constraints.targets[target], processed);
-                                        // std::cout << "tactical,verifa,ri," << linearConstraintsIntraBloc_ri[30 + (0*this->_rs.n)].getValue() << std::endl;
+                                        if (transfCt.stitching == LinearCombinationsStitching::Regular) {                                        
+                                           this->calculateRTAmatrix(linearConstraintsIntraBloc_ri, transfCt, localRandomness, this->_constraints.targets[target], processed);
+                                        } else {
+                                            this->calculateRTAStitchingMatrix(linearConstraintsStitchingIntraBloc_ri, transfCt, localRandomness, this->_constraints.targets[target], processedStitched, iteration);
+                                        }
 
                                     }
                                     break;
@@ -1739,7 +1912,7 @@ namespace ligero {
 
                         auto vectorInterBloc = [&](std::vector<FieldT>& linearConstraintsInterBloc_rU, const std::vector<size_t>& v_early, const std::vector<size_t>& v) -> void {
                             for (size_t idx = 0; idx < v.size(); idx++) {
-                                this->splitWitnessInterbloc(linearConstraintsInterBloc_rU,v_early[idx], v[idx],FieldT(scaleToPrime(*this->_randomness++, this->_publicData.modulusIdx)), Uq_early, Uq);
+                                this->splitWitnessInterbloc(linearConstraintsInterBloc_rU,v_early[idx], v[idx],FieldT(ligero::math::scaleToPrime(*this->_randomness++, this->_publicData.modulusIdx)), Uq_early, Uq);
                             }
                         };
 
@@ -1749,12 +1922,15 @@ namespace ligero {
                         if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
                             vectorInterBloc(linearConstraintsInterBloc_rU, this->_splitWitness.si_early_BlocIdxs,this->_splitWitness.si_BlocIdxs);
                             vectorInterBloc(linearConstraintsInterBloc_rU, this->_splitWitness.ei_early_BlocIdxs,this->_splitWitness.ei_BlocIdxs);
-                            vectorInterBloc(linearConstraintsInterBloc_rU, this->_splitWitness.xi_early_BlocIdxs,this->_splitWitness.xi_BlocIdxs);
                         }
 
                         // Testing 
 
                         // Aggregate test for each constraint
+                        if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
+                            test(TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS, linearConstraintsStitchingIntraBloc_riU, localSecretSharing);
+                        }
+
                         if (linearConstraintsSigma_r.size()>0) {
                                     displayVector(",Verifier,local, Verifier Linear Interbloc Constraints Combinations Challenge:", linearConstraintsSigma_r);
                                     displayVector(",Verifier,transcript, Prover Interbloc Constraints Response:", linearConstraintsSigma_rU);
@@ -1786,13 +1962,18 @@ namespace ligero {
                     std::vector<FieldT> linearConstraintsInterBloc_c_rUq;
                     std::vector<FieldT> linearConstraintsInterBlocSigmaProtocol_c_rUq;
                     std::vector<FieldT> linearConstraintsIntraBloc_c_riUq;
+                    std::vector<FieldT> linearConstraintsStitchingIntraBloc_c_riUq;
                     std::vector<FieldT> quadraticConstraints_c_rUq;
 
                     size_t idxLinear = 0, idxTransformation = 0, idxQuadratic = 0;
                     target = 0;
 
+                    if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
+                        linearCombinationPerConstraint(TEST_LINEAR_INTRABLOC_STITCHING_CONSTRAINTS, linearConstraintsStitchingIntraBloc_c_riUq, linearConstraintsStitchingIntraBloc_ri, Q, Uq, processedStitched, iteration);
+                    }
+
                     if (hasTransformation) {
-                        linearCombinationPerConstraint(TEST_LINEAR_INTRABLOC_CONSTRAINTS, linearConstraintsIntraBloc_c_riUq, linearConstraintsIntraBloc_ri, Q, Uq, processed);
+                        linearCombinationPerConstraint(TEST_LINEAR_INTRABLOC_CONSTRAINTS, linearConstraintsIntraBloc_c_riUq, linearConstraintsIntraBloc_ri, Q, Uq, processed, iteration);
                         }
 
                         // std::cout << "tactical,veriff,ri," << linearConstraintsIntraBloc_ri[30 + (0*this->_rs.n)].getValue() << std::endl;
@@ -1830,6 +2011,7 @@ namespace ligero {
                             displayVector(",Verifier,transcript, Verifier Linear Interbloc Constraints Combinations Challenge Open Col:", linearConstraintsInterBloc_c_rUq);
                             displayVector(",Verifier,transcript, Verifier Linear Sigma Protocol Constraints Combinations Challenge Open Col:", linearConstraintsInterBlocSigmaProtocol_c_rUq);
                             displayVector(",Verifier,transcript, Verifier Linear Intrabloc Constraints Combinations Challenge Open Col:", linearConstraintsIntraBloc_c_riUq);
+                            displayVector(",Verifier,transcript, Verifier Linear Intrabloc Constraints Combinations Challenge Open Col:", linearConstraintsStitchingIntraBloc_c_riUq);
                             displayVector(",Verifier,transcript, Verifier Quadratic Constraints Combinations Challenge Open Col:", quadraticConstraints_c_rUq);
                         #endif
 
@@ -1854,13 +2036,19 @@ namespace ligero {
                             else throw failedTest((std::string("consistency check failed: quadraticConstraints")).c_str());
                         }
 
+                        // if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
+                        //         if (compare(linearConstraintsStitchingIntraBloc_riU, Q, linearConstraintsStitchingIntraBloc_ri)) DBG("Success: consistency linearConstraintsStitchingIntraBloc");
+                        //         else throw failedTest((std::string("consistency check failed: linearConstraintsStitchingIntraBloc")).c_str());
+                        // }
+                        // TOFIX
+
                         // Free Randomness
                         free (this->_alloc);
                     }
                 }
 
                 // Verify Arguments
-                void verifyConsolidatedZKSnarkFile(FullFSTranscript<FieldT>& t) {
+                void verifyConsolidatedZKSnarkFile(FullFSTranscript<FieldT>& t, bool earlyCommitmentOnly = false) {
 
                 this->_myTimer.initialize_timer();
                 this->_transcript = t;
@@ -1887,7 +2075,7 @@ namespace ligero {
                         builder<FieldT> helper(this->_l);
                         vector<vector<FieldT>> earlyCommitments2DVector;
 
-                        expressNPStatement<FieldT> expressStatementEarlyCommitment(this->_publicData, this->_secretData, helper, &earlyCommitments2DVector, this->_l, this->_randomness);
+                        expressNPStatement<FieldT> expressStatementEarlyCommitment(this->_publicData, this->_sigmaProtocolPublicData, this->_secretData, helper, &earlyCommitments2DVector, this->_l, this->_randomness);
                         expressStatementEarlyCommitment.buildConstraintSet(Statements::RSACeremony_EarlyCommitments);
 
                         this->_myTimer.begin(3,"compile",0);
@@ -1895,14 +2083,12 @@ namespace ligero {
                         this->_myTimer.end(3,"compile",0);
 
                         this->_myTimer.end(2,"Build Extended Witness & Constraint System For Early Commitment",0);
-    
+
                         this->_splitWitness.si_early_BlocIdxs = assessBlocIdx(helper, expressStatementEarlyCommitment._siCoefsBlocIds);
                         this->_splitWitness.ei_early_BlocIdxs = assessBlocIdx(helper, expressStatementEarlyCommitment._eiCoefsBlocIds);
-                        this->_splitWitness.xi_early_BlocIdxs = assessBlocIdx(helper, expressStatementEarlyCommitment._xiCoefsBlocIds);
 
-                        this->_mtParams_early.leavesEntropy = this->_rs.m = earlyCommitments2DVector.size() + this->_constraints_early.constant_blocks + 1;
-                        this->_rs_early.m = earlyCommitments2DVector.size() + this->_constraints_early.constant_blocks + 1;
-                }
+                        this->_mtParams_early.leavesEntropy = this->_rs_early.m = earlyCommitments2DVector.size() + this->_constraints_early.constant_blocks + 1;
+                     }
 
                 // Building the constraint system and populating the extended witness
                 // ==================================================================
@@ -1910,20 +2096,18 @@ namespace ligero {
                     builder<FieldT> bob(this->_l);
                     vector<vector<FieldT>> extendedWitness2DVector;
 
-                    expressNPStatement<FieldT> expressStatement(this->_publicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
+                    expressNPStatement<FieldT> expressStatement(this->_publicData, this->_sigmaProtocolPublicData, this->_secretData, bob, &extendedWitness2DVector, this->_l, this->_randomness);
                     expressStatement.buildConstraintSet(this->_statement, false);
 
                     this->_constraints = bob.compile(extendedWitness2DVector);                // Main functionality to retain
                     DBG(this->_constraints.constraints.size());
-                    transformation_constraint<FieldT> *c = (transformation_constraint<FieldT>*)this->_constraints.constraints[3];
 
                     // Dimensioning the circuit accordingly
-                    this->_mtParams.leavesEntropy = this->_rs.m = extendedWitness2DVector.size() + this->_constraints.constant_blocks + 1;
+                    this->_mtParams.leavesEntropy = this->_rs.m = extendedWitness2DVector.size() + this->_constraints.constant_blocks + nbBlindingRows;
 
                     if ((this->_statement == Statements::RSACeremony)||(this->_statement == Statements::RSACeremony_Rounds3to6)) {
                         this->_splitWitness.si_BlocIdxs = assessBlocIdx(bob, expressStatement._siCoefsBlocIds);
-                        this->_splitWitness.ei_BlocIdxs = assessBlocIdx(bob, expressStatement._eiCoefsBlocIds);
-                        this->_splitWitness.xi_BlocIdxs = assessBlocIdx(bob, expressStatement._xiCoefsBlocIds);
+                        this->_splitWitness.ei_BlocIdxs = assessBlocIdx(bob, expressStatement._siCoefsBlocIds);
                     }
 
                 // Generating and sending the proof 

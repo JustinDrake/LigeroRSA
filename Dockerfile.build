@@ -58,5 +58,4 @@ RUN apt-get install -y libzmq3-dev
 WORKDIR /root/
 COPY --from=builder /opt/src/app/build/src/party_full_protocol .
 COPY --from=builder /opt/src/app/build/src/coordinator_full_protocol .
-COPY --from=builder /opt/src/app/build/src/distributed_verifier .
 CMD ["./party_full_protocol"]  

@@ -117,6 +117,7 @@ class Fpp : public Fp<NumberType, modulus> {
         static void randomVector(Fpp<NumberType, modulus> *,size_t, bool non_zero = false);
         static void randomPartialMatrix(Fpp<NumberType, modulus> *,size_t, size_t, size_t, bool non_zero = false);
         static void randomPartialMatrixColumns(Fpp<NumberType, modulus> *,size_t, size_t, size_t, bool non_zero = false);
+        static void zeroSumNonZRandomVector(Fpp<NumberType, modulus> *vector, size_t colsRandomness);
 
         // Boost Serialization
         friend class boost::serialization::access;
@@ -357,29 +358,6 @@ void Fpp_Fixed<modulus>::preprocessing(size_t overrideN) {
     DBG("ω = " << Fpp_Fixed::omega);
     DBG("");
     DBG("Pre-processing completed - Proth Prime Field Constructed.");
-
-    // Fpp_Fixed::rootsOfUnity.assign(size,-1);
-    // Fpp_Fixed::rootsOfUnity[0] = 1;
-    // pow_elt = Fpp_Fixed(1);
-    
-    // Fpp_Fixed p_omega(Fpp_Fixed::omega);
-    // for (size_t idx = 1; idx< static_cast<size_t>(size) ;idx++) {
-    //     pow_elt = pow_elt * p_omega;
-    //     Fpp_Fixed::rootsOfUnity[idx] = pow_elt.getValue();
-    // }
-
-	// std::cout << "size " << size << std::endl;
-	// std::cout << "p_omega " << p_omega.getValue() << std::endl;
-	// std::cout << "modulus " << modulus << std::endl;	
-    
-	// std::cout << (p_omega^(size/2)).getValue() << std::endl;
-	// std::cout << Fpp_Fixed::rootsOfUnity[size/2] << std::endl;
-	
-    //assert(Fpp_Fixed::rootsOfUnity[0] == 1);
-    //assert(Fpp_Fixed::rootsOfUnity[2] == (p_omega^2).getValue());
-    //assert(Fpp_Fixed::rootsOfUnity[size/2] ==(p_omega^(size/2)).getValue()) ;
-    //assert(Fpp_Fixed::rootsOfUnity[size/4] == (p_omega^(size/4)).getValue());
-
     // 
     DBG("------------------------------------------------------------------");
 
@@ -579,6 +557,27 @@ void Fpp<NumberType, modulus>::randomPartialMatrix(Fpp<NumberType, modulus> *arr
         for (size_t j = 0; j< colsRandomness; j++) {
             array[i*cols + j].populate(NumberType(ligero::math::mod(engine(), static_cast<NumberType>(modulus-1)) + (non_zero ? 1 : 0)));
         }
+    }
+
+    return;
+};
+
+// Computes a random vector
+template<typename NumberType, const NumberType& modulus>
+void Fpp<NumberType, modulus>::zeroSumNonZRandomVector(Fpp<NumberType, modulus> *vector, size_t colsRandomness) {
+    boost::random::independent_bits_engine<boost::random::mt19937, 64, uint64_t> engine;
+    boost::random::random_device rd;
+    boost::random::seed_seq seq = { rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+    engine.seed(seq);
+    
+    // Populate the Vector
+    for (size_t j = 0; j< colsRandomness; j++) {
+        NumberType pick(engine());
+        while ((pick == 0)||(pick >= modulus)) {
+            pick = engine();
+        }
+        
+        vector[j].populate(pick);
     }
 
     return;

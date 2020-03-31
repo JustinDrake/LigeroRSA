@@ -197,9 +197,9 @@ void radix2_FFT_64(uint64_t *a, size_t size, long long int stride, bool directRe
             long long int lookupIdx = 0;
             for (size_t j = 0; j < m; ++j)
             {
-                uint64_t t = a[size+lookupIdx]*a[k+j+m]; //modW(static_cast<WideInteger>(a[size+lookupIdx]) * static_cast<WideInteger>(a[k+j+m]));
-                a[k+j+m] = a[k+j] - t; //mod(a[k+j] - t);
-                a[k+j] = a[k+j] + t; //mod(a[k+j] + t);
+                uint64_t t = a[size+lookupIdx]*a[k+j+m];
+                a[k+j+m] = a[k+j] - t;
+                a[k+j] = a[k+j] + t;
 
                 lookupIdx = (lookupIdx + stride * (n/(2*m)) + size) % size;
             }

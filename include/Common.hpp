@@ -1,42 +1,123 @@
 #pragma once
 
+// Disable Boost deprecated header message
+#define BOOST_PENDING_INTEGER_LOG2_HPP
+#include <boost/integer/integer_log2.hpp>
+
+#include <boost/functional/hash.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/dynamic_bitset/serialization.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
 #include <boost/multiprecision/gmp.hpp>
 #include <boost/serialization/array.hpp>
+#include <boost/serialization/unordered_map.hpp>
 
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 
 #include <sodium/crypto_generichash.h>
 
-#include <iostream>
 #include <gmpxx.h>
+#include <iostream>
+#include <sstream>
+#include <variant>
+#include <zmq.hpp>
 
+#include "easylogging++.h"
 #include "nfl.hpp"
 #include <sstream>
 
-#define MAX_LINES_DISPLAY           10
+#define NDEBUG
 
-template <class T, std::size_t N>
-std::ostream& operator<< (std::ostream& o, const std::array<T, N>& arr)
-{
-    std::copy(arr.cbegin(), arr.cend(), std::ostream_iterator<T>(o, " "));
-    return o;
-}
+using namespace std::chrono_literals;
 
-#include "easylogging++.h"
-
-typedef boost::multiprecision::mpz_int MPInt;
+#define MAX_LINES_DISPLAY 10
 
 typedef uint64_t RegularInteger;
 typedef unsigned __int128 WideInteger;
 
+/** Enum class for zero knowledge linear constraint **/
 enum class LinearConstraintFlag : uint64_t {
-    Regular,
-	SigmaProtocol
+    Regular,      /**< Regular constraint */
+    SigmaProtocol /**< Sigma protocol     */
 };
+
+/** Enum class for zero knowledge linear constraint **/
+enum class LinearCombinationsStitching : uint64_t {
+    Regular,
+    StitchingNoScalar,      
+    StitchingScalar         
+};
+
+/** Error handling */
+enum class Error : size_t {
+    TIMED_OUT,
+    OUT_OF_SYNC,
+    MODULUS_NOT_FOUND,
+    DESERIALIZE_FAIL,
+    TOO_FEW_PARTIES,
+    TOO_MANY_RESTART,
+    RESTART,
+    KILLED_BY_COORDINATOR,
+    UNKNOWN_ERROR
+};
+
+template <typename T, typename U = Error>
+using expected = std::variant<T, U>;
+using Unit = std::monostate;
+
+std::string showError(Error e) {
+    switch (e) {
+        case Error::TIMED_OUT:
+            return std::string("Receving timed out");
+        case Error::OUT_OF_SYNC:
+            return std::string("Out of synchronization");
+        case Error::MODULUS_NOT_FOUND:
+            return std::string("No modulus found");
+        case Error::DESERIALIZE_FAIL:
+            return std::string("Deserialization failed when receving message");
+        case Error::TOO_FEW_PARTIES:
+            return std::string("Too few parties left to continue the protocol");
+        case Error::TOO_MANY_RESTART:
+            return std::string("Too many restart");
+        case Error::RESTART:
+            return std::string("Restart the protocol");
+        case Error::KILLED_BY_COORDINATOR:
+            return std::string("Party killed by coordinator");
+        case Error::UNKNOWN_ERROR:
+        default:
+            break;
+    }
+    return std::string("Unknown error: ") + std::to_string(size_t(e));
+}
+
+template <typename T>
+inline bool hasError(const expected<T>& result) {
+    return std::holds_alternative<Error>(result);
+}
+
+template <typename T>
+inline Error getError(const expected<T>& result) {
+    return std::get<Error>(result);
+}
+
+template <typename T>
+inline auto getResult(const expected<T>& result) 
+    -> decltype(std::get<T>(result)) 
+{
+    return std::get<T>(result);
+}
+
+/** Operator << overloading for output an array to stream
+ * @param o Reference of output stream
+ * @param arr Array to be copied
+ * @return Reference of the output stream
+ */
+template <class T, std::size_t N>
+std::ostream& operator<<(std::ostream& o, const std::array<T, N>& arr) {
+    std::copy(arr.cbegin(), arr.cend(), std::ostream_iterator<T>(o, " "));
+    return o;
+}
 
 //==============================================================================
 // Platform definitions and app configuration
@@ -55,26 +136,49 @@ INITIALIZE_EASYLOGGINGPP
 #define THROW_IF_NOT_INITIALIZED(X) initialized ? X : throw std::logic_error(kPublicKeyInvalidGetterInvocation);
 
 // Timers Constraints
-constexpr unsigned int comSizeBuffer        = 100;
-constexpr unsigned int timeSizeBuffer       = 100;
-constexpr unsigned int logLevels            = 4;
+/** Timer communication buffer size */
+constexpr unsigned int comSizeBuffer = 100;
+/** Timer time buffer size */
+constexpr unsigned int timeSizeBuffer = 100;
+/** Timer logging level */
+constexpr unsigned int logLevels = 4;
 
 // Multi-Threading Physical Constraints
-#define NB_MAX_THREADS                      90
-#define MAX_SINGLE_THREADED_ITERATIONS      3
+#define NB_MAX_THREADS 90
+#define MAX_SINGLE_THREADED_ITERATIONS 3
+
+// Profiling
+
+// Display
+constexpr int restiveX = 1;
+constexpr int restiveY = 25;
+
+constexpr auto firstline = 5;
+constexpr auto displayStride = 7;
+constexpr auto displayOffset = 30;
 
 //==============================================================================
 // Profiling    
 typedef struct timepoint {
-    size_t cummulative_communication;
-    struct timespec timer;
+    size_t cummulative_communication; /**< Cummulative communication cost */
+    struct timespec timer;            /**< Structure holding an interval  */
 } timepoint;
+
+void printAtXY(int x,int y, std::string output)
+{
+    std::string display = std::string("%c[%d;%df") + output;
+    printf(display.c_str(),0x1B,y,x);
+
+    std::string cursor = std::string("%c[%d;%df\n");
+    printf(cursor.c_str(),0x1B,restiveY,restiveX);
+}
 
 class timers {
 protected:
-    struct timespec anchor;
-    std::unordered_map<std::string, timepoint> timer_start;
-    bool active = false;
+    struct timespec anchor; /**< Anchor */
+    std::unordered_map<std::string, timepoint>
+    timer_start;     /**< Map of started timer */
+    bool active = false; /**< Activation flag */
 
 public:
     void initialize_timer() {
@@ -82,32 +186,46 @@ public:
         clock_gettime(CLOCK_MONOTONIC, &this->anchor);
     }
 
+   /** Start a new timer
+    * @param level Timer indentation level in display
+    * @param label Name of this timer
+    * @param cummulative_communication Commulative communication cost
+    */
     void begin(size_t level, std::string label, size_t cummulative_communication) {
         struct timespec time;
-        
+
         if (!this->active) return;
 
         clock_gettime(CLOCK_MONOTONIC, &time);
- 
         timepoint tmp;
         tmp.timer = time;
         tmp.cummulative_communication = cummulative_communication;
         timer_start.insert(std::pair<std::string, timepoint>(label, tmp));
     }
 
+   /** Helper function for calculating the difference between two time points
+    * @param[in] start The start time point
+    * @param[in] stop The stop time point
+    * @param[out] result Result we are writing to
+    */
     void timespec_diff(struct timespec *start, struct timespec *stop, struct timespec *result)
     {
-    if ((stop->tv_nsec - start->tv_nsec) < 0) {
+        if ((stop->tv_nsec - start->tv_nsec) < 0) {
             result->tv_sec = stop->tv_sec - start->tv_sec - 1;
             result->tv_nsec = stop->tv_nsec - start->tv_nsec + 1000000000L;
         } else {
             result->tv_sec = stop->tv_sec - start->tv_sec;
             result->tv_nsec = stop->tv_nsec - start->tv_nsec;
         }
-    return;
+        return;
     }
 
-    // buf needs to store 30 characters
+   /** Pretty printing a timespec structure to string
+    * @param[out] buf Output buffer. Needs to store 30 characters
+    * @param[in] len Length of the buffer
+    * @param[in] ts Time interval
+    * @return On success return 0
+    */
     int timespec2str(char *buf, uint len, struct timespec *ts) {
         uint ret;
         struct tm t;
@@ -131,26 +249,32 @@ public:
         return 0;
     }
 
-    void end(size_t level, std::string label, size_t cummulative_communication) {
+   /** Stop a running timer. NOTE: The whole program will exit if wrong label
+    * is given
+    * @param level Timer indentation level in display
+    * @param label Timer name, must be same with the running timer
+    * @param cummulative_communication Cummulative communication
+    */
+    void end(size_t level, std::string label, size_t cummulative_communication, bool higherLogLevel = false) {
         struct timespec time;
 
         if (!this->active) return;
 
         clock_gettime(CLOCK_MONOTONIC, &time);
-        
+
         std::unordered_map<std::string, timepoint>::iterator iterator = timer_start.find(label);
         if (iterator == timer_start.end()) {std::cout << "error, label " + label + " doesn't exist"; exit(0);}
-        
+
         timepoint reference = iterator->second;
-        timespec label_time; 
-        timespec aggregate_time;        
+        timespec label_time;
+        timespec aggregate_time;
 
         timespec_diff(&anchor, &time, &aggregate_time);
         timespec_diff(&reference.timer, &time, &label_time);
 
         char label_time_char[timeSizeBuffer];
         char aggregate_time_char[timeSizeBuffer];
-        
+
         if (timespec2str(label_time_char, sizeof(label_time_char), &label_time) != 0) {
             strcpy(label_time_char,"invalid time");
         }
@@ -172,7 +296,7 @@ public:
             levels[i].assign(" ");
         }
 
-        levels[level-1].assign(label);
+        levels[level - 1].assign(label);
         std::string comma(",");
 
         std::string msg("‹");
@@ -181,23 +305,45 @@ public:
             msg += (levels[i] + comma);
         }
 
-        msg += std::string(label_communication_char) 
-            + comma 
-            + std::string(cummulative_communication_char)
-            + comma 
-            + std::string(label_time_char)
-            + comma 
-            + std::string(aggregate_time_char)
-            + comma;
+        msg += std::string(label_communication_char) + comma +
+               std::string(cummulative_communication_char) + comma +
+               std::string(label_time_char) + comma +
+               std::string(aggregate_time_char) + comma;
 
-        DBG(msg);
+        if (higherLogLevel) LOG(INFO) << msg;
+        else DBG(msg);
+    }
+
+    void reset() {
+        LOG(INFO) << "Reset all timers as well";
+        timer_start.clear();
+        initialize_timer();
     }
 };
 
-//==============================================================================
-/** All Public Data */
+        /*
+            All Public Data On Current Protocol
+        */
+        class SigmaProtocolPublicData {
+            public:
+                std::vector<uint64_t> sigmaeGCD;
+                std::vector<uint64_t> sigmazGCD;
+                std::vector<uint64_t> sigmaaGCD;
+                std::vector<uint64_t> sigmagGCD;
 
-//==============================================================================
+            private:
+                friend class boost::serialization::access;
+
+                // Implements seralization and deserialization of public data
+                template <class Archive>
+                void serialize(Archive& ar, const unsigned int version)
+                {
+                    ar & sigmaeGCD;
+                    ar & sigmazGCD;
+                    ar & sigmaaGCD;
+                    ar & sigmagGCD;
+                }
+        };
 
         /*
             All Public Data On Current Protocol
@@ -212,7 +358,7 @@ public:
                 size_t lambda;
                 size_t tau_limit_bit;
                 size_t tau;
-                size_t numCandidates;
+                // size_t numCandidates;
                 size_t modulusIdx;
                 size_t ptNumberEvaluation;
 
@@ -276,6 +422,7 @@ public:
                 std::vector<uint64_t> axGCD;
                 std::vector<uint64_t> byGCD;
                 std::vector<uint64_t> axbyGCD;
+                std::vector<uint64_t> finalModuli_GCD;
 
                 // Roots Of Unity
                 std::vector<uint64_t> roots;
@@ -286,6 +433,7 @@ public:
                 // std::vector<mpz_class> sigmaz;
                 std::vector<uint64_t> sigmaeGCD;
                 std::vector<uint64_t> sigmazGCD;
+                mpz_class gammaSeed;
 
                 std::vector<uint64_t> log2Ds;
                 std::vector<uint64_t> Cs;
@@ -307,9 +455,7 @@ public:
                     ar & lambda;
                     ar & tau_limit_bit;
                     ar & tau;
-                    ar & numCandidates;
                     ar & modulusIdx;
-                    ar & roots;
                     ar & ptNumberEvaluation;
 
                     ar & special;
@@ -331,7 +477,6 @@ public:
 
                     ar & ax_shares;
                     ar & by_shares;
-                    ar & fixedCoefs;
                     ar & coefsCAN;
                     ar & cans;
                     ar & prodcans;
@@ -349,18 +494,7 @@ public:
                     ar & axGCD;
                     ar & byGCD;
                     ar & axbyGCD;
-
-                    ar & roots;
-
-                    // ar & sigmaa;
-                    // ar & sigmae;
-                    // ar & sigmaz;
-                    ar & sigmaeGCD;
-                    ar & sigmazGCD;
-                    //ar & sigmar;
-                    //ar & sigmax;
-                    //ar & sigmablind;
-                    //ar & sigmabeta;
+        	        ar & finalModuli_GCD;
 
                     ar & indicesPS;
                     ar & indicesCAN;
@@ -369,6 +503,8 @@ public:
                     ar & log2Ds;
                     ar & Cs;
                     ar & Ds;
+
+                    ar & gammaSeed;
                 }
         };
 
@@ -437,9 +573,19 @@ public:
                     std::vector<uint64_t> q_r_r11;
 
 		    // Round 12:
+                    std::vector<uint64_t> ss_GCD;
                     std::vector<uint64_t> q_r12;
 
-            // Sigma protocol:
+            // Cross-Moduli Integrity:
+                    uint64_t              alpha;
+                    uint64_t              W1;
+                    uint64_t              W2;
+                    std::vector<std::vector<std::vector<std::vector<uint64_t>>>> ai;
+                    // ai are structured as follows:
+                    // - one entry for the iteration idx
+                    // - one entry per attached variable (ei,si,ux,uz)
+                    // - one entry per block (degree/_blockSize)
+                    // - _blockSize entries per block 
 
             // Bit Decompositions
                     std::vector<std::vector<bool>> bitDecompositions;
@@ -447,12 +593,11 @@ public:
                     std::vector<uint64_t> XplusDs;
                     std::vector<uint64_t> Xs;
 
-		    // std::vector<mpz_class> sigmar;
                     std::vector<uint64_t> sigmarGCD;
                     std::vector<uint64_t> sigmaxGCD;
                     std::vector<uint64_t> sigmaqGCD;
                     std::vector<uint64_t> exp_q;
-                    //std::vector<uint64_t> sigma_blind;
+                    std::vector<uint64_t> expqGCD;
 
             private:
                 friend class boost::serialization::access;
@@ -464,6 +609,11 @@ public:
                     ar & siP;
                     ar & eiP;
                     ar & q_r3;
+
+                    ar & alpha;
+                    ar & W1;
+                    ar & W2;
+                    ar & ai;
 
                     ar & xi;
                     ar & ux;
@@ -510,6 +660,7 @@ public:
                     ar & q_r_r11;
                     ar & r_CRTs;
 
+            		ar & ss_GCD;
                     ar & q_r12;
 
                     // ar & sigmar;
@@ -517,7 +668,7 @@ public:
                     ar & sigmaxGCD;
                     ar & sigmaqGCD;
                     ar & exp_q;
-                    //ar & sigma_blind;
+                    ar & expqGCD;
 
                     ar & isAvailable;
                     ar & bitDecompositions;
@@ -525,25 +676,83 @@ public:
                     ar & XplusCs;
                     ar & XplusDs;
 
-                }
-        };
+    }
+};
 
-//==============================================================================
 /** Misc Helper Functions */
 
-//==============================================================================
+mpz_class positiveRemainder(mpz_class & a, mpz_class & b) {
+        return ((a % b + b) % b);
+};
 
-void configureEasyLogging(std::string tag = "") {
+template <size_t NbPrimesQ>
+void dataExtractSubVector(std::vector<uint64_t> &assignee, std::vector<mpz_class> &target, std::vector<size_t> &idxs) {
+    assignee.resize(target.size()*NbPrimesQ);
+    int ctr = 0;
+    for (size_t idx = 0; idx < idxs.size(); idx++) {
+        for (size_t pidx = 0; pidx < NbPrimesQ; pidx++) {
+            mpz_class prime = mpz_class(nfl::params<uint64_t>::P[pidx]);
+            mpz_class u = positiveRemainder(target[idxs[idx]], prime);
+            assignee[ctr++] = mpz_get_ui(u.get_mpz_t());
+        }
+    }
+};
+
+
+void dataExtractVector(std::vector<uint64_t> &assignee, std::vector<mpz_class> &target) {
+        assignee.resize(target.size());
+        for (size_t idx = 0; idx < target.size(); idx++) {
+            assignee[idx] = mpz_get_ui(target[idx].get_mpz_t());
+        }
+    };
+
+template <size_t NbPrimesQ>
+void dataExtractVectorCRT(std::vector<uint64_t> &assignee, std::vector<mpz_class> &target) {
+    assignee.resize(target.size()* NbPrimesQ);
+    size_t ctr = 0;
+    for (size_t idx = 0; idx < target.size(); idx++) {
+        for (size_t pidx = 0; pidx < NbPrimesQ; pidx++) {
+            mpz_class prime = mpz_class(nfl::params<uint64_t>::P[pidx]);
+            mpz_class u = positiveRemainder(target[idx], prime);
+            assignee[ctr++] = mpz_get_ui(u.get_mpz_t());
+        }
+    }
+};
+
+template <typename T, size_t Degree, size_t NbPrimesQ>
+void dataExtractQ(std::vector<uint64_t> &assignee, nfl::poly_p<T, Degree, NbPrimesQ> & target) {
+    assignee.assign(
+            target.poly_obj().data(),
+            target.poly_obj().data() + (size_t)target.nmoduli * (size_t)target.degree);
+};
+
+template<typename T>
+std::string serialize(T obj) {
+    std::stringstream ss;
+    boost::archive::binary_oarchive oa(ss);
+
+    oa << obj;
+
+    return (ss.str());
+};
+
+void configureEasyLogging(const char* fileChar = "default") {
+    std::string file(fileChar);
+
     el::Configurations c;
     c.setToDefault();
-    std::string config = std::string("*GLOBAL:\n FORMAT = %datetime{%H:%m:%s.%g} %msg\n LOG_FLUSH_THRESHOLD = 1\n ENABLED = true\n FILENAME = \"test") + tag + std::string(".log\" \n TO_FILE = true \n TO_STANDARD_OUTPUT = false\n*DEBUG:\n \n TO_FILE = true\n TO_STANDARD_OUTPUT = false\n LOG_FLUSH_THRESHOLD = 1\n *INFO:\n \n TO_FILE = true\n TO_STANDARD_OUTPUT = false");
+    std::string config = std::string("*GLOBAL:\n FORMAT = %datetime{%H:%m:%s.%g} %msg\n LOG_FLUSH_THRESHOLD = 1\n ENABLED = true\n FILENAME = \"") + file + std::string(".log\" \n TO_FILE = true \n TO_STANDARD_OUTPUT = false\n*DEBUG:\n \n TO_FILE = true\n TO_STANDARD_OUTPUT = false\n LOG_FLUSH_THRESHOLD = 1\n *INFO:\n \n TO_FILE = true\n TO_STANDARD_OUTPUT = false");
     c.parseFromText(config.c_str());
     el::Loggers::addFlag(el::LoggingFlag::ImmediateFlush);
     el::Loggers::setDefaultConfigurations(c, true);
     el::Loggers::addFlag(el::LoggingFlag::ImmediateFlush);
 }
 
-template<typename T>
+/** Helper function for serializing data in binary format and save to file
+ * @param data Serializable data
+ * @param filename File to save
+ */
+template <typename T>
 void sendToFile(T& data, std::string filename) {
     std::stringstream ss;
     std::ofstream fileHandler(filename.c_str(), std::ios::binary);
@@ -552,52 +761,78 @@ void sendToFile(T& data, std::string filename) {
     oa << data;
 
     std::string msg = ss.str();
-
     fileHandler << msg;
     // Destructors will close both file handler and boost serializer
     system((std::string("touch ") + filename + std::string("_complete")).c_str());
 }
 
-template<typename T>
+/** Helper function for serializing data in binary format and save to file
+ * @param data string
+ * @param filename File to save
+ */
+template <>
+void sendToFile(const std::string& data, std::string filename) {
+    std::ofstream fileHandler(filename.c_str(), std::ios::binary);
+    fileHandler << data;
+    system((std::string("touch ") + filename + std::string("_complete")).c_str());
+}
+
+/** Helper function for saving data to file
+ * @param data message
+ * @param filename File to save
+ */
+void sendToFileRaw(zmq::message_t* msg, std::string filename) {
+    std::stringstream ss;
+    std::ofstream fileHandler(filename.c_str(), std::ios::binary);
+
+    ss.write(msg->data<char>(), msg->size());
+    std::string msgOut = ss.str();
+    fileHandler << msgOut;
+}
+
+/** Helper function for deserializing data from file
+ * @param data[out] Destination to save fetched data
+ * @param filename[in] File name to read from
+ */
+template <typename T>
 void fetchFromFile(T& data, std::string filename) {
     std::ifstream fileHandler(filename.c_str(), std::ios::binary);
     boost::archive::binary_iarchive ia(fileHandler);
     ia >> data;
 
-    // Destructors will close both file handler and boost serializer 
+    // Destructors will close both file handler and boost serializer
 }
 
+/** Helper function for checking if file exist
+ * @param name File name to check
+ * @return True if file exist
+ */
 inline bool doesFileExist(const std::string& name) {
-  struct stat buffer;   
-  return (stat (name.c_str(), &buffer) == 0); 
+    struct stat buffer;
+    return (stat(name.c_str(), &buffer) == 0);
 }
 
+/** Helper function for checking if complete file exist
+ * @param name File name to check
+ * @return True if file exist
+ */
 inline bool doesTouchFileExist(const std::string& name) {
-  struct stat buffer;   
-  return (stat ((name+std::string("_complete")).c_str(), &buffer) == 0); 
+    struct stat buffer;
+    return (stat((name + std::string("_complete")).c_str(), &buffer) == 0);
 }
 
-/* Data Structures */
-class internalError : public std::runtime_error {using std::runtime_error::runtime_error;};
-class failedTest : public std::runtime_error {using std::runtime_error::runtime_error;};
+/** Runtime error */
+class internalError : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+/** Runtime error */
+class failedTest : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
-//==============================================================================
 /** Stream overload for a std::array<T>. */
 
-//==============================================================================
-
-using namespace std::chrono_literals;
-
-namespace ligero
-{
-
-    // Helper Class to Express Indices
-    struct CandidateIndices {
-        std::vector<size_t> ps;
-        std::vector<size_t> can;
-        std::vector<size_t> gcd;
-    };
-
+namespace ligero {
     // Constants
     constexpr auto kDefaultRegistrationWaitTime = 30s;
     constexpr int kTrialsThreshold = 10;
@@ -607,15 +842,16 @@ namespace ligero
     constexpr double kDefaultChiStd = 3.2;
     const size_t kJacobiNumberOfRandomValues = 1000;
 
-    constexpr auto primesPS = 43918; // 43200;
+    constexpr auto primesPS = 43917; // 43200;
     constexpr auto primesCAN = 21600;
-    constexpr auto primesGCD = 18; //180;
+    constexpr auto primesGCD = 19;
     constexpr auto primesTOTAL = primesPS + primesCAN + primesGCD;
 
     // Constant strings
     const std::string kPublicKeyInvalidGetterInvocation = "Getters should be used only after proper object instantiation.";
 
     // Application-wide typedefs
+    typedef std::pair<std::vector<mpz_class>, std::pair<std::vector<mpz_class>, std::vector<mpz_class>>> TripleVector;
     typedef boost::multiprecision::mpz_int MPInt;
     typedef boost::multiprecision::cpp_int_backend<64, 64, boost::multiprecision::signed_magnitude, boost::multiprecision::checked, void> Int64_backend;
     typedef boost::multiprecision::number<Int64_backend> Int64;
@@ -627,6 +863,64 @@ namespace ligero
 
     typedef std::pair<std::pair<std::vector<mpz_class>, std::vector<mpz_class>>, mpz_class> PairOfVecGCD;
 
+    template <typename T, size_t Degree, size_t NbPrimesQ>
+    class BadEventData {
+
+        using Q = nfl::poly_p<T, Degree, NbPrimesQ>;
+        public:
+        BadEventData() : 
+            jacobiSeed(mpz_class(0)),
+            jacobiAndGCDSeed(mpz_class(0)),
+            si(nfl::poly_p<T, Degree, NbPrimesQ>{0}),
+            ei(nfl::poly_p<T, Degree, NbPrimesQ>{0}),
+            bi(nfl::poly_p<T, Degree, NbPrimesQ>{0}),
+            gcdRX(mpz_class(0)),
+            gcdSS(std::vector<mpz_class>()) {}
+
+        BadEventData(mpz_class _jacobiSeed, 
+                mpz_class _jacobiAndGCDSeed,
+                nfl::poly_p<T, Degree, NbPrimesQ> _si,
+                nfl::poly_p<T, Degree, NbPrimesQ> _ei,
+                nfl::poly_p<T, Degree, NbPrimesQ> _bi,
+                mpz_class _gcdRX,
+                std::vector<mpz_class> _gcdSS) 
+            : jacobiSeed(_jacobiSeed),
+            jacobiAndGCDSeed(_jacobiAndGCDSeed),
+            si(_si),
+            ei(_ei),
+            bi(_bi),
+            gcdRX(_gcdRX),
+            gcdSS(_gcdSS)
+            {}
+
+        nfl::poly_p<T, Degree, NbPrimesQ> si, ei, bi;
+        mpz_class jacobiSeed;
+        mpz_class jacobiAndGCDSeed;
+        mpz_class gcdRX;
+        std::vector<mpz_class> gcdSS;
+
+        private:
+        friend class boost::serialization::access;
+        // Implements seralization and deserialization of public data
+        template <class Archive>
+        void serialize(Archive& ar, const unsigned int version)
+        {
+            ar & jacobiSeed;
+            ar & jacobiAndGCDSeed;
+            ar & si;
+            ar & ei;
+            ar & bi;
+            ar & gcdRX;
+            ar & gcdSS;
+        }
+
+    };
+
+    enum class ProtocolMode : int {
+        NORMAL,
+        REPLAY,
+        RECORD
+    };
 
     // Protocol configuration values
     template <typename T>
@@ -638,9 +932,9 @@ namespace ligero
             : _rows(rows), _cols(cols), _chiStd(chiStd), _q(q), _packingFactor(packingFactor), _numParties(numParties), initialized(true) {};
 
         ProtocolConfig(size_t numParties, size_t numPrimesP, size_t numPrimesQ, size_t degree,
-                       size_t sigma, size_t lambda, size_t tauLimit, size_t pbs)
+                       size_t sigma, size_t lambda, size_t tauLimit, size_t pbs, ProtocolMode protocolMode)
             : _numParties(numParties), _nb_primes_p(numPrimesP), _nb_primes_q(numPrimesQ),
-              _degree(degree), _sigma(sigma), _lambda(lambda), _tau_bit_limit(tauLimit), _pbs(pbs), initialized(true)
+              _degree(degree), _sigma(sigma), _lambda(lambda), _tau_bit_limit(tauLimit), _pbs(pbs), _protocolMode(protocolMode), initialized(true)
             { }
 
         int rows() const { return THROW_IF_NOT_INITIALIZED(_rows); }
@@ -659,6 +953,7 @@ namespace ligero
         size_t lambda() const { return _lambda; }
         size_t tauLimitBit() const { return _tau_bit_limit; }
         size_t pbs() const { return _pbs; }
+        ProtocolMode protocolMode() const { return _protocolMode; }
 
     private:
         friend class boost::serialization::access;
@@ -681,6 +976,8 @@ namespace ligero
             ar & _tau_bit_limit;
             ar & _pbs;
 
+            ar & _protocolMode;
+
             initialized = true;
         }
 
@@ -699,6 +996,7 @@ namespace ligero
         size_t _lambda;
         size_t _tau_bit_limit;
         size_t _pbs;
+        ProtocolMode _protocolMode;
     };
 
     class PartyCommitment {
@@ -708,14 +1006,16 @@ namespace ligero
 
         PartyCommitment(
                 std::string ipAddress,
+                std::vector<std::string> earlyW,
                 std::string ai,
                 std::string seed1,
                 std::string seed2
                 )
-            : _ipAddress(ipAddress), _aiHash(ai), _seed1hash(seed1), _seed2hash(seed2)
+            : _ipAddress(ipAddress), _earlyW(earlyW), _aiHash(ai), _seed1hash(seed1), _seed2hash(seed2)
             { }
 
         std::string ipAddress() const { return _ipAddress; }
+        std::vector<std::string> earlyW() const { return _earlyW; }
         std::string aiHash() const { return _aiHash; }
         std::string seed1hash() const { return _seed1hash; }
         std::string seed2hash() const { return _seed2hash; }
@@ -727,21 +1027,27 @@ namespace ligero
         void serialize(Archive& ar, const unsigned int version)
         {
             ar & _ipAddress;
+            ar & _earlyW;
             ar & _aiHash;
             ar & _seed1hash;
             ar & _seed2hash;
         }
 
-        std::string _ipAddress;
-        std::string _aiHash;
-        std::string _seed1hash;
-        std::string _seed2hash;
+        std::string                 _ipAddress;
+        std::vector<std::string>    _earlyW;
+        std::string                 _aiHash;
+        std::string                 _seed1hash;
+        std::string                 _seed2hash;
     };
 
     // Enumerating message types
     enum class MessageType : int {
         ABORT_PROTOCOL_VERSION_MISMATCH,
         ID_PARTY = PROTOCOL_VERSION_NUMBER,
+        REPLAY_PROTOCOL_SHARES,
+        REPLAY_PROTOCOL_RESPONSE,
+        RECORD_PROTOCOL_SHARES,
+        RECORD_PROTOCOL_RESPONSE,
         THROUGHPUT_TEST_START,
         THROUGHPUT_TEST_STOP,
         THROUGHPUT_TEST_SURVIVE,
@@ -798,18 +1104,34 @@ namespace ligero
         MESSAGE,
         P_CLEAR_DEBUG,
         Q_CLEAR_DEBUG,
-        MUTHU_ACK,
+        SYNCHRONIZE_NOW,
         FOUND_MODULI,
         NO_MODULI,
+        NO_MODULI_VERIFICATION_SHARES,
+        NO_MODULI_VERIFICATION_FINISHED,
+        BAD_EVENT_DATA_SHARES,
+        BAD_EVENT_DATA_RESPONSE,
         PROTOCOL_RESTART,
+        PROTOCOL_KILLED,
         END,
         GATHER_PROOFS,
-        GATHER_PUBLIC_DATA
+        GATHER_PUBLIC_DATA,
+        GATHER_SIGMA_DATA,
+        VERIFIER_READY,
+        PUBLIC_DATA_TO_VERIFIER,
+        PROOF_TO_VERIFIER,
+        GATHER_REPORTS,
+        VERIFIER_REPORT,
+        RECYCLE_VERIFIER
     };
 
 std::vector<std::string> msgs = {
         "ABORT_PROTOCOL_VERSION_MISMATCH",
-        "ID_PARTY = PROTOCOL_VERSION_NUMBER",
+        "ID_PARTY",
+        "REPLAY_PROTOCOL_SHARES",
+        "REPLAY_PROTOCOL_RESPONSE",
+        "RECORD_PROTOCOL_SHARES",
+        "RECORD_PROTOCOL_RESPONSE",
         "THROUGHPUT_TEST_START",
         "THROUGHPUT_TEST_STOP",
         "THROUGHPUT_TEST_SURVIVE",
@@ -866,13 +1188,25 @@ std::vector<std::string> msgs = {
         "MESSAGE",
         "P_CLEAR_DEBUG",
         "Q_CLEAR_DEBUG",
-        "MUTHU_ACK",
+        "SYNCHRONIZE_NOW",
         "FOUND_MODULI",
         "NO_MODULI",
+        "NO_MODULI_VERIFICATION_SHARES",
+        "NO_MODULI_VERIFICATION_FINISHED",
+        "BAD_EVENT_DATA_SHARES",
+        "BAD_EVENT_DATA_RESPONSE",
         "PROTOCOL_RESTART",
+        "PROTOCOL_KILLED",
         "END",
         "GATHER_PROOFS",
-        "GATHER_PUBLIC_DATA"
+        "GATHER_PUBLIC_DATA",
+        "GATHER_SIGMA_DATA",
+        "VERIFIER_READY",
+        "PUBLIC_DATA_TO_VERIFIER",
+        "PROOF_TO_VERIFIER",
+        "GATHER_REPORTS",
+        "VERIFIER_REPORT",
+        "RECYCLE_VERIFIER"
     };
 
     /** Overload the addition operator for std::array types. */
@@ -919,6 +1253,40 @@ std::vector<std::string> msgs = {
         return result;
     }
 
+    // Helper Class to Express Indices
+    struct CandidateIndices {
+        std::vector<size_t> ps;
+        std::vector<size_t> can;
+        std::vector<size_t> gcd;
+    };
+
+
+    CandidateIndices getCandidateIndices(size_t idx, const std::vector<size_t>& index_candidates) {
+
+            std::vector<size_t> ps;
+            size_t i;
+            for (i = 0; i < primesPS; ++i) {
+                if (index_candidates[i] == idx) {
+                    ps.push_back(i);
+                }
+            }
+
+            std::vector<size_t> can;
+            for (; i < primesPS + primesCAN; ++i) {
+                if (index_candidates[i] == idx) {
+                    can.push_back(i);
+                }
+            }
+
+            std::vector<size_t> gcd;
+            for (; i < primesPS + primesCAN + primesGCD; ++i) {
+                if (index_candidates[i] == -2) { // -2 is a special value used only for GCD. Only one candidate uses it
+                    gcd.push_back(i);
+                }
+            }
+            return CandidateIndices({ps, can, gcd});
+        }
+
     /** Helper function for discarding values from a ColumnVector */
     template <typename NumberType>
     std::vector<NumberType> discardCandidates (
@@ -940,7 +1308,7 @@ std::vector<std::string> msgs = {
         }
 
         return survivors;
-    }   
+    }
 
 //==============================================================================
 // Helper function for debug
@@ -1062,7 +1430,7 @@ std::vector<std::string> msgs = {
 
         std::tuple<mpz_class, mpz_class, mpz_class, uint64_t> rephraseAs2Nct(mpz_class d) {
 
-            // Rephrase the problem using the nearest 2^n 
+            // Rephrase the problem using the nearest 2^n
             auto [ D, log2D ] = ligero::roundToUpperPowerTwoLarge(2*d);
             mpz_class C = mpz_class(D-d);
 
@@ -1086,12 +1454,111 @@ std::vector<std::string> msgs = {
 
             return std::tuple<mpz_class, mpz_class, mpz_class, uint64_t>(d,C,D,log2D);
         }
+        
+        std::string extractAll(std::vector<uint64_t>& v) {
+            std::string tmp("");
+            if (v.size()>0) {
+                for (size_t idx = 0; idx < v.size()-1; idx++) {
+                    tmp += std::to_string(v[idx]) + std::string(",");
+                }
+                tmp += std::to_string(v[v.size()-1]);
+            } else {
+                tmp.assign("-");
+            }
+
+            return tmp;
+        }
+
+        void dumpSigmaProtocolPublicData(SigmaProtocolPublicData& spd) {
+            std::ofstream out("dump_sigmaProtocolPublicData");
+
+            out << extractAll(spd.sigmaeGCD) << std::endl;
+            out << extractAll(spd.sigmazGCD) << std::endl;
+
+            out.close();
+        }
+
+        void dumpPublicData(PublicData& pd) {
+            std::ofstream out("dump_publicData");
+
+            out << pd.degree << std::endl;
+            out << pd.p << std::endl;
+            out << pd.q << std::endl;
+            out << pd.sigma << std::endl;
+            out << pd.lambda << std::endl;
+            out << pd.tau_limit_bit << std::endl;
+            out << pd.tau << std::endl;
+            out << pd.modulusIdx << std::endl;
+            out << pd.ptNumberEvaluation << std::endl;
+            out << pd.special << std::endl;
+            out << extractAll(pd.ps) << std::endl;
+            out << extractAll(pd.indicesPS) << std::endl;
+            out << extractAll(pd.indicesCAN) << std::endl;
+            out << extractAll(pd.indicesGCD) << std::endl;
+            out << extractAll(pd.A) << std::endl;
+            out << extractAll(pd.bi) << std::endl;
+            out << extractAll(pd.b) << std::endl;
+            out << extractAll(pd.ci_1) << std::endl;
+            out << extractAll(pd.ci_2) << std::endl;
+            out << extractAll(pd.ci_1_prime) << std::endl;
+            out << extractAll(pd.ci_2_prime) << std::endl;
+            out << extractAll(pd.c_1) << std::endl;
+            out << extractAll(pd.c_2) << std::endl;
+            out << extractAll(pd.di) << std::endl;
+            out << extractAll(pd.c_1_prime) << std::endl;
+            out << extractAll(pd.c_2_prime) << std::endl;
+            out << extractAll(pd.ax_shares) << std::endl;
+            out << extractAll(pd.by_shares) << std::endl;
+            out << extractAll(pd.coefsCAN) << std::endl;
+            out << extractAll(pd.cans) << std::endl;
+            out << extractAll(pd.prodcans) << std::endl;
+            out << extractAll(pd.ax) << std::endl;
+            out << extractAll(pd.by) << std::endl;
+            out << extractAll(pd.axby) << std::endl;
+            out << extractAll(pd.ax_shares_GCD) << std::endl;
+            out << extractAll(pd.by_shares_GCD) << std::endl;
+            out << extractAll(pd.coefsGCD) << std::endl;
+            out << extractAll(pd.gcds) << std::endl;
+            out << extractAll(pd.prodgcds) << std::endl;
+            out << extractAll(pd.axGCD) << std::endl;
+            out << extractAll(pd.byGCD) << std::endl;
+            out << extractAll(pd.axbyGCD) << std::endl;
+            out << extractAll(pd.finalModuli_GCD) << std::endl;
+            out << extractAll(pd.roots) << std::endl;
+            out << extractAll(pd.log2Ds) << std::endl;
+            out << extractAll(pd.Cs) << std::endl;
+            out << extractAll(pd.Ds) << std::endl;
+
+            out.close();
+        }
+
+        struct coordinates {
+            size_t bloc;
+            size_t col;
+            bool   isAvailable;
+        };
 
 } // namespace ligero
 
 //==============================================================================
 namespace boost {
     namespace serialization {
+
+        template <class Archive>
+        void serialize(Archive& ar, boost::uuids::uuid& id, const unsigned int version)
+        {
+            if (Archive::is_saving::value)
+            {
+                std::string s = boost::lexical_cast<std::string>(id);
+                ar & s;
+            }
+            else
+            {
+                std::string s;
+                ar & s;
+                id = boost::lexical_cast<boost::uuids::uuid>(s);
+            }
+        }
 
         /** Implements serialization and deserialization for an MPInt type to
          *  an arbitrary Boost Archive.
@@ -1154,5 +1621,6 @@ namespace boost {
                 x = mpz_class(s);
             }
         }
+
     } // namespace serialization
 } // namespace boost

@@ -1,8 +1,9 @@
 #pragma once
 
+#include "Common.hpp"
+
 #include <algorithm>
 #include <bitset>
-#include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/binary_iarchive.hpp>
 
@@ -12,8 +13,6 @@
 #include <boost/dynamic_bitset.hpp>
 #include <boost/multiprecision/gmp.hpp>
 #include <boost/program_options.hpp>
-#include <boost/random.hpp>
-#include <boost/random/random_device.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -22,8 +21,8 @@
 #include <csignal>
 #include <chrono>
 #include <functional>
-#include <optional>
 #include <string>
+#include <set>
 #include <thread>
 #include <future>
 
@@ -33,7 +32,6 @@
 #include "nfl.hpp"
 
 #include "Math.hpp"
-#include "Common.hpp"
 
 namespace ligero
 {
@@ -61,8 +59,9 @@ public:
     static boost::archive::binary_oarchive scriptOArchive;
                 
     //==============================================================================
-    ZeroMQCoordinatorTransport(const std::string& uri, int parties, std::chrono::milliseconds receive_timeout = std::chrono::minutes(1))
-        : context(kDefaultZeroMQIOThreads, 3),
+    ZeroMQCoordinatorTransport(const std::string& uri, int parties
+        , std::chrono::milliseconds receive_timeout = std::chrono::minutes(10))
+        : context(kDefaultZeroMQIOThreads, 10),
           socket(context, ZMQ_ROUTER),
           numParties(parties),
           receive_timeout(receive_timeout)
@@ -75,14 +74,12 @@ public:
         restartCount = 0;
     }
 
-    //virtual ~ZeroMQCoordinatorTransport() = default;
     ~ZeroMQCoordinatorTransport()  {
         ofs.close();
     }
 
-    //==============================================================================
     /** Waits for registration messages over the socket; clients registering for the protocol. */
-    void awaitRegistration() {
+    expected<Unit> awaitRegistration() {
         int registeredParties = 0;
 
         auto registrationEndTime = std::chrono::steady_clock::now() + kDefaultRegistrationWaitTime;
@@ -93,6 +90,8 @@ public:
             {static_cast<void*>(socket), 0, ZMQ_POLLIN, 0}
         };
 
+        // clear ids before start
+        ids.clear();
 
         while (timeNow < registrationEndTime
             && static_cast<int>(ids.size()) < numParties) {
@@ -110,7 +109,7 @@ public:
                 if (rc && (items[0].revents & ZMQ_POLLIN)) {
                     socket.recv(&identity);
                 } else {
-                    LOG(INFO) << "Timedout: no data transfer to coordinator";
+                    LOG(INFO) << "Registration Timedout: no data transfer to coordinator";
                     continue;
                 }
 
@@ -122,7 +121,8 @@ public:
                 memcpy(&sid, identity.data<char>(), identity.size());
 
                 // check the id is one of survivor
-                if (std::find(survivor.begin(), survivor.end(), sid) == survivor.end()) {
+                auto sid_pos = std::find(survivor.begin(), survivor.end(), sid);
+                if (sid_pos == survivor.end()) {
                     continue;
                 }
 
@@ -133,14 +133,26 @@ public:
                 boost::archive::binary_iarchive ia(ss);
                 PartyCommitment input;
 
-                ia >> header;
-                ia >> input;
-                assert(header == MessageType::ID_PARTY);
-
+                try {
+                    ia >> header;
+                    ia >> input;
+                }
+                catch (...) {
+                    LOG(INFO) << "Error deserializing message, kicking out party " << sid;
+                    // since `sid` is in the survivor list, kick it out
+                    survivor.erase(sid_pos);
+                    continue;
+                }
+                
+                if (header != MessageType::ID_PARTY) {
+                    LOG(INFO) << "Party sent wrong header, adding to kickout list";
+                    survivor.erase(sid_pos);
+                    continue;
+                }
 
                 // Cross-referencing IDs and IPs
-                LOG(INFO) << "CROSS_REFERENCING,ID," << sid << "," << input.ipAddress();
-                LOG(INFO) << "REGISTRATION, PROCESS 1, PARTIES REMAINING = " << (numParties - (++registeredParties));
+                //LOG(INFO) << "CROSS_REFERENCING,ID," << sid << "," << input.ipAddress();
+                //LOG(INFO) << "REGISTRATION, PROCESS 1, PARTIES REMAINING = " << (numParties - (++registeredParties));
 
                 partiesCommitments[sid] = std::move(input);
                 received[sid] = true;
@@ -148,10 +160,17 @@ public:
             }
         }
 
+        if (ids.size() < kMinAmountOfPartiesRequired) {
+            LOG(INFO) << "Registration failed: Too few parties left";
+            return Error::TOO_FEW_PARTIES;
+        }
+
         LOG(INFO) << "Registration completed for " << ids.size() << " out of " << numParties;
         numParties = ids.size();
         DBG("Writing numParties");
         scriptOArchive << numParties;
+
+        return Unit{};
     }
 
     std::vector<SocketId> hostThroughputTest(
@@ -198,7 +217,13 @@ public:
                 MessageType header;
                 boost::archive::binary_iarchive ia(ss);
 
-                ia >> header;
+                try {
+                    ia >> header;
+                }
+                catch(...) {
+                    LOG(INFO) << "Deserialization fail detected";
+                    continue;
+                }
 
                 if (header == MessageType::THROUGHPUT_TEST_START) {
                     connected_clients++;
@@ -212,7 +237,8 @@ public:
                 else {
                     // simply discard unknown message
                     DBG("WARNING: coordinator discard unknown message");
-                    broadcast(MessageType::ABORT_PROTOCOL_VERSION_MISMATCH, std::vector{sid});
+                    LOG(INFO) << "WARNING: coordinator discard unknown message";
+                    numParties--;
                     continue;
                 }
             }
@@ -220,15 +246,19 @@ public:
         LOG(INFO) << connected_clients << " parties are joining throughput test";
         numParties = connected_clients;
 
-        if (numParties < 2) {
-            LOG(FATAL) << "Expect at least 2 parties, got " << numParties << ". Aborting.";
-            exit(0);
-        }
-
-        // notify everyone to start throughput test
+        // get all participants
         std::vector<SocketId> participants(numParties);
         std::transform(package_received.begin(), package_received.end(), 
             participants.begin(), [](const std::pair<SocketId, size_t>& x) { return x.first; });
+
+        // quit gracefully if no enough participants
+        if (participants.size() < kMinAmountOfPartiesRequired) {
+            LOG(INFO) << "Expect at least 2 parties, got " << participants.size();
+            ids = std::move(participants);
+            return ids;
+        }
+
+        // notify everyone to start throughput test
         broadcast(MessageType::THROUGHPUT_TEST_START, participants);
         
         // launch timer before start test
@@ -253,6 +283,7 @@ public:
             }
             else {
                 DBG("WARNING: receive message from unregisted client");
+                continue;
             }
         }
 
@@ -292,13 +323,16 @@ public:
         return survivor;
     }
 
+    expected<std::pair<SocketId, zmq::message_t*>> awaitNextInput() {
+        return awaitNextInput(receive_timeout);
+    }
+
     /** Waits for the next message over the socket.
      *
      *  Returns a deserialized SocketId and message pair from the
      *  sending party.
      */
-    template <typename T>
-    std::optional<std::pair<SocketId, zmq::message_t*>> awaitNextInput(MessageType t) {
+    expected<std::pair<SocketId, zmq::message_t*>> awaitNextInput(std::chrono::milliseconds timeout) {
         DBG("In awaitNextInput");
         zmq::message_t identity;
         zmq::message_t *request = new zmq::message_t();
@@ -318,14 +352,14 @@ public:
                 // of our coordinator code we just wait synchronously until we have
                 // the data necessary to proceed.
                 DBG("Polling...");
-                auto rc = zmq::poll(items, receive_timeout);
+                auto rc = zmq::poll(items, timeout);
                 DBG("items[0].revents & ZMQ_POLLIN = " << static_cast<bool>(items[0].revents & ZMQ_POLLIN));
                 if (rc && (items[0].revents & ZMQ_POLLIN)) {
                     socket.recv(&identity);
                 } else {
-                    LOG(INFO) << "Timedout: no data transfer to coordinator";
+                    LOG(INFO) << " Timedout: no data transfer to coordinator";
                     delete request;
-                    return std::nullopt;
+                    return Error::TIMED_OUT;
                 }
 
                 if (!receiving) {
@@ -333,6 +367,7 @@ public:
                     myTimers.begin(4,"Actual transfer",communicationCost);
                     receiving = true;
                 }
+
                 // Receive remaining data
                 socket.recv(request);
 
@@ -344,96 +379,16 @@ public:
 
                 it = std::find(ids.begin(), ids.end(), sid);
 
-                /*if (it == ids.end()) {
-                  DBG("Msg from Participant (" << sid << ") Rejected");
-                  } else {
-                  DBG("Msg from Participant (" << sid << ") Accepted");
-                  }*/
             } while (it == ids.end());
         } catch(...) {
             LOG(INFO) << "Caught exception";
-            return std::nullopt;
+            return Error::UNKNOWN_ERROR;
         }
 
         received[sid] = true;
 
         DBG("Finished awaitNextInput");
-        return {{sid,request}};
-    }
-
-    /** Waits for the next message over the socket.
-     *
-     *  Returns a deserialized SocketId and message pair from the
-     *  sending party.
-     */
-    template <class T>
-    std::pair<SocketId, T> awaitNextInputST(MessageType t) {
-        zmq::message_t identity;
-        zmq::message_t request;
-
-        SocketId sid;
-        MessageType header;
-        T input;
-
-        // Block, waiting for the next incoming request. The ZeroMQ context
-        // automatically handles reading from the TCP socket on a separate thread and
-        // preparing/queueing incoming messages. Thus from the perspective
-        // of our coordinator code we just wait synchronously until we have
-        // the data necessary to proceed.
-        // while (1==1) {sleep(1);}
-        socket.recv(&identity);
-        socket.recv(&request);
-
-        // Communication Cost
-        communicationCost += identity.size() + request.size();
-
-        // Assign the socket id
-        memcpy(&sid, identity.data<char>(), identity.size());
-
-        // Deserialize the message content to a column vector
-        std::stringstream ss;
-        ss.write(request.data<char>(), request.size());
-
-        boost::archive::binary_iarchive ia(ss);
-        ia >> header;
-        ia >> input;
-
-        // Verify that we're on the same page as the sender. Can abort here
-        // if not.
-        assert (t == header);
-        return {std::move(sid), std::move(input)};
-    }
-
-    /** Waits for the next message over the socket.
-     *
-     *  Returns a deserialized SocketId and message pair from the
-     *  sending party.
-     */
-    template <class T>
-    std::pair<SocketId, T> awaitNextInputRaw(MessageType t) {
-        zmq::message_t identity;
-        zmq::message_t request;
-
-        SocketId sid;
-        MessageType header;
-        T input;
-
-        // Block, waiting for the next incoming request. The ZeroMQ context
-        // automatically handles reading from the TCP socket on a separate thread and
-        // preparing/queueing incoming messages. Thus from the perspective
-        // of our coordinator code we just wait synchronously until we have
-        // the data necessary to proceed.
-        // while (1==1) {sleep(1);}
-        socket.recv(&identity);
-        socket.recv(&request);
-
-        // Communication Cost
-        communicationCost += identity.size() + request.size();
-
-        // Assign the socket id
-        memcpy(&sid, identity.data<char>(), identity.size());
-
-        return {std::move(sid), std::move(input)};
+        return std::make_pair(sid,request);
     }
 
     template <typename T>
@@ -443,8 +398,7 @@ public:
             std::function<T(T, T)> op,
             T& accumulator,
             std::vector< std::pair<SocketId,zmq::message_t*> > *accumulated,
-            std::vector<T>& storage,
-            size_t storageIndex
+            std::unordered_map<SocketId, T, boost::hash<SocketId>>& storage
             ) {
         bool initializing = true;
 
@@ -467,26 +421,24 @@ public:
                 ia >> header;
                 if (initializing) {
                     ia >> accumulator;
-                    storage[storageIndex + subIndex] = accumulator;
+                    storage[elt.first] = accumulator;
                     subIndex++;
                 } else {
                     ia >> input;
-                    storage[storageIndex + subIndex] = input;
+                    storage[elt.first] = input;
                     subIndex++;
                 }
-
-                //scriptOArchive << std::string("input");
-
-                // Verify that we're on the same page as the sender. Can abort here
-                // if not.
 
                 if(t != header)
                 {
                     DBG("Received shares from Participant (" << elt.first << ")");
-                    DBG("t:" << msgs[(int)t]);
-                    DBG("header:" << msgs[(int)header]);
+                    DBG("t:" << (int)t);
+                    DBG("t:" << msgs[1 + int(t) - int(MessageType::ID_PARTY)]);
+                    DBG("header:" << msgs[1 + int(header) - int(MessageType::ID_PARTY)]);
 
-                    assert (t == header);
+                    kickouts.push_back(elt.first);
+                    delete elt.second;
+                    continue;
                 }
 
                 // Check parties commitments
@@ -559,6 +511,7 @@ public:
             }
         }
         DBG("Finished procesBatch2");
+        delete accumulated;
     }
 
 
@@ -568,7 +521,7 @@ public:
      *  result, as in a functional reduce or fold-left pattern.
      */
     template <typename T>
-    std::optional<T> awaitAggregateVectorInput(
+    expected<std::pair<T, std::unordered_map<SocketId, T, boost::hash<SocketId>>>> awaitAggregateVectorInput(
         MessageType t,
         const std::vector<SocketId>& ids,
         std::function<T(T, T)> op,
@@ -576,7 +529,7 @@ public:
         ) {
 
         // Record header of the phase into a file
-        DBG("Writing MessageType");
+        DBG("Writing to script file MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)]); 
         scriptOArchive << t;
 
         DBG("received.size() = " << received.size());
@@ -595,7 +548,7 @@ public:
         this->nbThreads = std::min(NB_MAX_THREADS, static_cast<int>(ceil(static_cast<double>(numParties)/2.0)));
         this->entriesPerBatch = ceil(static_cast<double>(numParties)/this->nbThreads);
         std::vector<T> intermediateResultsPhaseOut(ceil(static_cast<double>(numParties)/this->entriesPerBatch));
-        std::vector<T> storage(numParties);
+        std::vector<std::unordered_map<SocketId, T, boost::hash<SocketId>>> storageVector(intermediateResultsPhaseOut.size());
 
         // Phase 1 Processing
         {
@@ -607,8 +560,9 @@ public:
             DBG("entriesPerBatch:" << this->entriesPerBatch);
             DBG("#threads:" << intermediateResultsPhaseOut.size());
 
-
             std::vector<std::future<std::pair<std::vector<SocketId>, std::vector<SocketId>>>> kickoutsAndRestarts;
+
+            myTimers.begin(2,"3.a. Wall clock on time on deserializing " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost);
 
             for (size_t i = 0; i < intermediateResultsPhaseOut.size(); i++) {
                 DBG("i = " << i);
@@ -620,18 +574,23 @@ public:
                 for (size_t j = 0; (j < this->entriesPerBatch) && (entriesProcessed < static_cast<unsigned int>(numParties));j++) {
                     DBG("Awaiting for input");
 
-                    auto input = awaitNextInput<T>(t);
-                    if (input) {
+                    auto input = awaitNextInput();
+                    if (!hasError(input)) {
                         DBG("Received input");
-                        batch->push_back(*input);
+                        batch->push_back(getResult(input));
                         entriesProcessed++;
                     }
                     else {
                         DBG("Did not receive input");
+
+                        std::set<SocketId> kickedout;
                         // Wait all threads end before return
                         if (i > 0) {
                             for ( auto& el : kickoutsAndRestarts ) {
-                                el.get();
+                                auto [kick, success] = el.get();
+                                if (!kick.empty()) {
+                                    std::for_each(kick.begin(), kick.end(), [&](const SocketId& id) { kickedout.insert(id); });
+                                }
                             }
                         }
 
@@ -641,44 +600,43 @@ public:
 
                         for (auto it = received.begin(); it != received.end(); it++) {
                             if (it->second) {
+                                if (!kickedout.empty() && (kickedout.find(it->first) != kickedout.end())) {
+                                    continue;
+                                }
                                 LOG(INFO) << "Adding party to restart: " << it->first;
                                 restarts.push_back(it->first);
                             } else {
                                 LOG(INFO) << "Adding party to kickout: " << it->first;
                                 kickouts.push_back(it->first);
                             }
-                            //it->second ? restarts.push_back(it->first)
-                            //: kickouts.push_back(it->first);
                         }
 
                         LOG(INFO) << "kickouts.size() = " << kickouts.size();
                         LOG(INFO) << "restarts.size() = " << restarts.size();
                         DBG("Restarting protocol for " << restarts.size() << "parties");
-                        //scriptOArchive << std::string("restart\n");
                         // remove data and start from the beginning
                         restartCount++;
                         ofs.open(std::string("script") + std::to_string(restartCount) + std::string(".data"), std::ios::out | std::ios::binary);
                         DBG("Writing restart.size()");
                         scriptOArchive << (int)restarts.size();
-                        broadcast(MessageType::PROTOCOL_RESTART, restarts);
 
                         // update remaining ids
-                        auto success = update_ids_from_received();
-                        if (!success) {
-                            LOG(FATAL) << "No parties remaining after timeout, aborting";
+                        auto success = update_ids(restarts);
+                        if (hasError(success)) {
+                            return getError(success);
                         }
                         else {
-                            LOG(INFO) << "Update ids with " << *success << " parties";
+                            LOG(INFO) << "Update ids with " << getResult(success) << " parties";
                         }
 
                         delete batch;
-                        return std::nullopt;
+                        return Error::RESTART;
                     }
                 }
 
                 DBG("Calling processBatch1...");
 
-                auto f = std::async(&processBatch1<T>, t, op, std::ref(intermediateResultsPhaseOut[i]), batch, std::ref(storage), i * this->entriesPerBatch);
+                auto f = std::async(&processBatch1<T>, t, op, std::ref(intermediateResultsPhaseOut[i]), batch, std::ref(storageVector[i]));
                 kickoutsAndRestarts.push_back(std::move(f));
             }
 
@@ -700,21 +658,19 @@ public:
 
                 if (restartProtocol) {
                     DBG("Restarting protocol for " << restarts.size() << " parties");
-                    //scriptOArchive << std::string("restart\n");
                     restartCount++;
                     ofs.open(std::string("script") + std::to_string(restartCount) + std::string(".data"), std::ios::out | std::ios::binary);
                     DBG("Writing restart.size()");
                     scriptOArchive << (int)restarts.size();
-                    broadcast(MessageType::PROTOCOL_RESTART, restarts);
 
                     auto success = update_ids(restarts);
-                    if (!success) {
-                        LOG(FATAL) << "Too few parties remaining to continue, aborting";
+                    if (hasError(success)) {
+                        return getError(success);
                     }
                     else {
-                        LOG(INFO) << "Update ids with " << *success << " parties";
+                        LOG(INFO) << "Update ids with " << getResult(success) << " parties";
                     }
-                    return std::nullopt;
+                    return Error::RESTART;
                 }
             }
         }
@@ -756,6 +712,7 @@ public:
 
         } while (intermediateResultsPhaseOut.size() > MAX_SINGLE_THREADED_ITERATIONS);
 
+        myTimers.end(2,"3.a. Wall clock on time on deserializing " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost, true);
         myTimers.end(4,"Actual transfer",communicationCost);
 
         // Phase 3 Aggregating                 
@@ -765,14 +722,21 @@ public:
             myTimers.end(3,"Receiving Data",communicationCost);
         }
 
-        DBG("Writing all inputs");
-        for (size_t i = 0; i < storage.size(); i++) {
-            scriptOArchive << std::pair{t, storage[i]};
+        // combine all storage into one
+        std::unordered_map<SocketId, T, boost::hash<SocketId>> storage;
+        for (auto& storageVal : storageVector) {
+            for (auto it = storageVal.begin(); it != storageVal.end(); ++it) {
+                storage[it->first] = it->second;
+            }
+        }
+        for (auto storageElement: storage) {
+            DBG("Writing to scriptOA " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << "for party " << storageElement.first);
+            scriptOArchive << std::pair{t, storageElement.second};
         }
 
-        DBG("Writing final accumulator");
+        LOG(DEBUG) << "Writing to scriptOA " << msgs[1 + int(t) - int(MessageType::ID_PARTY)]; 
         scriptOArchive << std::pair{t, accumulator};
-        return accumulator;
+        return std::make_pair(accumulator, storage);
     }
 
     //==============================================================================
@@ -783,6 +747,8 @@ public:
 
         oa << static_cast<int>(t);
         std::string msg = ss.str();
+
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
 
         for (const auto& id : sids) {
             bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
@@ -800,6 +766,39 @@ public:
      *  message type header.
      */
     template <typename T>
+    void send (MessageType t, const SocketId& id, const T& values) {
+        std::stringstream ss;
+        boost::archive::binary_oarchive oa(ss);
+
+        // Serilize column vector to string
+
+        myTimers.begin(2,"3.a. Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost);
+        oa << static_cast<int>(t);
+        oa << values;
+        myTimers.end(2,"3.a. Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost, true);
+        std::string msg = ss.str();
+
+        bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
+        if (!success) throw std::runtime_error("Failing to send message.");
+
+        success = socket.send(msg.c_str(), msg.size());
+        if (!success) throw std::runtime_error("Failing to send message.");
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
+
+    }
+
+    /** Write data to the transcript file
+     */
+    template <typename T>
+    void writeToTranscript (MessageType t, const T& values) {
+        scriptOArchive << t;
+        scriptOArchive << values;
+    }
+
+    /** Send a set of values to each of the given sockets, prefaced with the given
+     *  message type header.
+     */
+    template <typename T>
     void broadcast (MessageType t, const std::vector<SocketId>& sids, const T& values) {
         std::stringstream ss;
         boost::archive::binary_oarchive oa(ss);
@@ -807,15 +806,20 @@ public:
         myTimers.begin(3,"Broadcasting Data",communicationCost);
 
         // Serilize column vector to string
+        myTimers.begin(2,"3.a Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost);
         oa << static_cast<int>(t);
         oa << values;
+        myTimers.end(2,"3.a Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost, true);
         std::string msg = ss.str();
+
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
 
         for (const auto& id : sids) {
             bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
             if (!success) throw std::runtime_error("Failing to send message.");
 
             success = socket.send(msg.c_str(), msg.size());
+
             if (!success) throw std::runtime_error("Failing to send message.");
 
             // Communication Cost
@@ -832,22 +836,11 @@ public:
         return std::string(buf);
     }
 
-    std::vector<SocketId> get_received() const {
-        std::vector<SocketId> new_ids;
-        for (auto it = received.begin(); it != received.end(); it++) {
-            if (it->second) {
-                new_ids.emplace_back(it->first);
-            }
-        }
-        return new_ids;
-    }
-
-
-    std::optional<int> update_ids(std::vector<SocketId> newIds) {
+    expected<int> update_ids(const std::vector<SocketId>& newIds) {
         auto size = newIds.size();
         // no enough parties to participate
         DBG("Number of parties remaining: " << size);
-        if (size < kMinAmountOfPartiesRequired) return std::nullopt;
+        if (size < kMinAmountOfPartiesRequired) return Error::TOO_FEW_PARTIES;
 
         ids.clear();
         ids.reserve(size);
@@ -864,11 +857,11 @@ public:
         return size;
     }
 
-    std::optional<int> update_ids_from_received() {
+    expected<int> update_ids_from_received() {
         auto size = std::count_if(received.begin(), received.end(), [](const auto& p) { return p.second; });
         // no enough parties to participate
         DBG("Number of parties remaining: " << size);
-        if (size < kMinAmountOfPartiesRequired) return std::nullopt;
+        if (size < kMinAmountOfPartiesRequired) return Error::TOO_FEW_PARTIES;
 
         numParties = size;
 
@@ -911,6 +904,285 @@ protected:
     unsigned int entriesPerBatch;
 };
 
+//==============================================================================
+/** An interfacee for coordinating an MPC protocol over ZeroMQ. */
+class ZeroMQGatheringTransport
+{
+public:
+    timers myTimers;
+    bool receiving;
+    static std::vector<SocketId> ids;
+    static std::unordered_map<SocketId, PartyCommitment, boost::hash<SocketId>> verifiersCommitments;
+                
+    //==============================================================================
+    ZeroMQGatheringTransport(const std::string& uri, int verifiers)
+        : context(kDefaultZeroMQIOThreads, 90),
+          socket(context, ZMQ_ROUTER),
+          numverifiers(verifiers)
+    {
+        socket.setsockopt(ZMQ_TCP_KEEPALIVE, 1);
+        socket.setsockopt(ZMQ_TCP_KEEPALIVE_INTVL, 30);
+        socket.setsockopt(ZMQ_LINGER, 0);
+
+        socket.bind(uri);
+    }
+
+    //virtual ~ZeroMQCoordinatorTransport() = default;
+    ~ZeroMQGatheringTransport()  {
+    }
+
+    /** Waits for the next message over the socket.
+     *
+     *  Returns a deserialized SocketId and message pair from the
+     *  sending party.
+     */
+    expected<std::pair<SocketId, zmq::message_t*>> awaitNextInput(std::chrono::milliseconds timeout) {
+        DBG("In awaitNextInput");
+        zmq::message_t identity;
+        zmq::message_t *request = new zmq::message_t();
+
+        SocketId sid;
+        SocketIterator it;
+
+        std::vector<zmq::pollitem_t> items = { 
+            {static_cast<void*>(socket), 0, ZMQ_POLLIN, 0}
+        };
+
+        try {
+            do {
+                // Block, waiting for the next incoming request. The ZeroMQ context
+                // automatically handles reading from the TCP socket on a separate thread and
+                // preparing/queueing incoming messages. Thus from the perspective
+                // of our coordinator code we just wait synchronously until we have
+                // the data necessary to proceed.
+                DBG("Polling...");
+                auto rc = zmq::poll(items, timeout);
+                DBG("items[0].revents & ZMQ_POLLIN = " << static_cast<bool>(items[0].revents & ZMQ_POLLIN));
+                if (rc && (items[0].revents & ZMQ_POLLIN)) {
+                    socket.recv(&identity);
+                } else {
+                    LOG(INFO) << " Timedout: no data transfer to coordinator";
+                    delete request;
+                    return Error::TIMED_OUT;
+                }
+
+                if (!receiving) {
+                    myTimers.end(4,"Idle (Waiting)",communicationCost);
+                    myTimers.begin(4,"Actual transfer",communicationCost);
+                    receiving = true;
+                }
+                // Receive remaining data
+                socket.recv(request);
+
+                // Communication Cost
+                communicationCost += identity.size() + request->size();
+
+                // Assign the socket id
+                memcpy(&sid, identity.data<char>(), identity.size());
+
+                it = std::find(ids.begin(), ids.end(), sid);
+
+                /*if (it == ids.end()) {
+                  DBG("Msg from Participant (" << sid << ") Rejected");
+                  } else {
+                  DBG("Msg from Participant (" << sid << ") Accepted");
+                  }*/
+            } while (it == ids.end());
+        } catch(...) {
+            LOG(INFO) << "Caught exception";
+            return Error::DESERIALIZE_FAIL;
+        }
+
+        DBG("Finished awaitNextInput");
+        return std::make_pair(sid,request);
+    }
+
+    expected<std::pair<SocketId, std::string>> awaitShortRegistration(MessageType t, std::chrono::milliseconds register_timeout) {
+        DBG("In awaitNextInput");
+        SocketId sid;
+        zmq::message_t identity;
+        zmq::message_t *rec = new zmq::message_t();
+        MessageType msgType;
+        std::string verifierIPAddress = "UNKNOWN";
+
+        std::vector<zmq::pollitem_t> items = { 
+            {static_cast<void*>(socket), 0, ZMQ_POLLIN, 0}
+        };
+
+        try {
+            // Block, waiting for the next incoming request. The ZeroMQ context
+            // automatically handles reading from the TCP socket on a separate thread and
+            // preparing/queueing incoming messages. Thus from the perspective
+            // of our coordinator code we just wait synchronously until we have
+            // the data necessary to proceed.
+            DBG("Polling...");
+            auto rc = zmq::poll(items, register_timeout);
+            DBG("items[0].revents & ZMQ_POLLIN = " << static_cast<bool>(items[0].revents & ZMQ_POLLIN));
+
+            if (rc && (items[0].revents & ZMQ_POLLIN)) {
+                socket.recv(&identity);
+
+                // Assign the socket id
+                memcpy(&sid, identity.data<char>(), identity.size());
+                ids.push_back(sid);
+
+                socket.recv(rec);
+
+                // Check the msg
+                std::stringstream ss;
+                ss.write(rec->data<char>(), rec->size());
+                delete rec;
+
+                boost::archive::binary_iarchive ia(ss);
+                ia >> msgType;
+                ia >> verifierIPAddress;
+
+                if (t != msgType) {
+                    return Error::OUT_OF_SYNC;
+                }
+
+            } else {
+                LOG(INFO) << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " Timedout: no data transfer to coordinator";
+                delete rec;
+                return Error::TIMED_OUT;
+            }
+        } catch(...) {
+            LOG(INFO) << "Caught exception";
+            delete rec;
+            return Error::DESERIALIZE_FAIL;
+        }
+
+        DBG("Finished awaitShortRegistration");
+        return std::make_pair(sid, verifierIPAddress);
+    }
+
+    //==============================================================================
+    /** Send an empty message of the given type to the given sockets. */
+    void broadcast (MessageType t, const std::vector<SocketId>& sids) {
+        std::stringstream ss;
+        boost::archive::binary_oarchive oa(ss);
+
+        oa << static_cast<int>(t);
+        std::string msg = ss.str();
+
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
+
+        for (const auto& id : sids) {
+            bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
+            if (!success) throw std::runtime_error("Failing to send message.");
+
+            success = socket.send(msg.c_str(), msg.size());
+            if (!success) throw std::runtime_error("Failing to send message.");
+
+            // Communication Cost
+            communicationCost += id.size() + msg.size();
+        }
+    }
+
+    /** Send a set of values to each of the given sockets, prefaced with the given
+     *  message type header.
+     */
+    template <typename T>
+    void send (MessageType t, const SocketId& id, const T& values) {
+        std::stringstream ss;
+        boost::archive::binary_oarchive oa(ss);
+
+        // Serilize column vector to string
+        myTimers.begin(2,"3.a. Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost);
+        oa << static_cast<int>(t);
+        oa << values;
+        myTimers.end(2,"3.a. Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost, true);
+        std::string msg = ss.str();
+
+        bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
+        if (!success) throw std::runtime_error("Failing to send message.");
+
+        success = socket.send(msg.c_str(), msg.size());
+        if (!success) throw std::runtime_error("Failing to send message.");
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
+
+    }
+
+    /** Send a set of values to each of the given sockets, prefaced with the given
+     *  message type header.
+     */
+    void sendMsg (const SocketId& id, const std::string& msg) {
+        LOG(INFO) << "party " << id << "msg.size()" << msg.size(); 
+
+        bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
+        if (!success) throw std::runtime_error("Failing to send message.");
+
+        success = socket.send(msg.c_str(), msg.size());
+        if (!success) throw std::runtime_error("Failing to send message.");
+        LOG(INFO) << "MessageType: " << msgs[1 + int(MessageType::GATHER_PUBLIC_DATA) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
+    }
+
+    /** Send a set of values to each of the given sockets, prefaced with the given
+     *  message type header.
+     */
+    void sendRaw (const SocketId& id, zmq::message_t* values) {
+
+        bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
+        if (!success) throw std::runtime_error("Failing to send message.");
+
+        std::stringstream ss;
+        boost::archive::binary_oarchive oa(ss);
+
+        success = socket.send(values->data(), values->size());
+        if (!success) throw std::runtime_error("Failing to send message.");
+        LOG(INFO) << "MessageType: " << msgs[1 + int(MessageType::GATHER_PROOFS) - int(MessageType::ID_PARTY)] << " message size: " << values->size() << " bytes";
+
+    }
+
+    /** Send a set of values to each of the given sockets, prefaced with the given
+     *  message type header.
+     */
+    template <typename T>
+    void broadcast (MessageType t, const std::vector<SocketId>& sids, const T& values) {
+        std::stringstream ss;
+        boost::archive::binary_oarchive oa(ss);
+
+        myTimers.begin(3,"Broadcasting Data",communicationCost);
+
+        // Serilize column vector to string
+        myTimers.begin(3,"3.a. Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost);
+        oa << static_cast<int>(t);
+        oa << values;
+        myTimers.end(3,"3.a. Serializing Data " + msgs[1 + int(t) - int(MessageType::ID_PARTY)], communicationCost, true);
+        std::string msg = ss.str();
+
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
+        for (const auto& id : sids) {
+            bool success = socket.send(id.begin(), id.size(), ZMQ_SNDMORE);
+            if (!success) throw std::runtime_error("Failing to send message.");
+
+            success = socket.send(msg.c_str(), msg.size());
+            if (!success) throw std::runtime_error("Failing to send message.");
+
+            // Communication Cost
+            communicationCost += id.size() + msg.size();
+        }
+
+        myTimers.end(3,"Broadcasting Data",communicationCost);
+    }
+
+    int& verifiers() { return numverifiers; }
+    const int& verifiers() const { return numverifiers; }
+
+    //==============================================================================
+    /** Run the protocol... */
+    virtual void host() {};
+
+    size_t communicationCost = 0;
+
+protected:
+    //==============================================================================
+    zmq::context_t context;
+    zmq::socket_t socket;
+    int numverifiers;
+    std::vector<SocketId> survivor;
+};
+
 std::unordered_map<SocketId, PartyCommitment, boost::hash<SocketId>> ZeroMQCoordinatorTransport::partiesCommitments;
 boost::filesystem::ofstream ZeroMQCoordinatorTransport::ofs("script.data", std::ios::out | std::ios::binary);
 boost::archive::binary_oarchive ZeroMQCoordinatorTransport::scriptOArchive(ZeroMQCoordinatorTransport::ofs, boost::archive::no_header);
@@ -921,6 +1193,8 @@ boost::archive::binary_oarchive ZeroMQCoordinatorTransport::scriptOArchive(ZeroM
 class ZeroMQClientTransport
 {
 public:
+    timers myTimers;
+
     //==============================================================================
     // ZeroMQClientTransport(const std::string& uri)
     //     : context(kDefaultZeroMQIOThreads),
@@ -931,10 +1205,11 @@ public:
     //     socket.connect(uri);
     // }
 
-    ZeroMQClientTransport(const std::string& uri, const SocketId& _socketId)
+    ZeroMQClientTransport(const std::string& uri, const SocketId& _socketId, std::chrono::milliseconds receive_timeout)
         : context(kDefaultZeroMQIOThreads),
           socket(context, ZMQ_DEALER),
-          socketId(_socketId)
+          socketId(_socketId),
+          receive_timeout(receive_timeout)
     {
         socket.setsockopt(ZMQ_IDENTITY, socketId);
         socket.setsockopt(ZMQ_TCP_KEEPALIVE, 1);
@@ -950,7 +1225,7 @@ public:
     // @wait_timeout: duration to wait when registration
     // @hard_timeout: duration of throughput test
     // @msg_size size of bytes of package to be sent
-    bool joinThroughputTest(size_t wait_timeout, size_t hard_timeout, size_t msg_size, size_t nb_max_send) {
+    expected<Unit> joinThroughputTest(size_t wait_timeout, size_t hard_timeout, size_t msg_size, size_t nb_max_send) {
 
         bool received_from_coordinator = false;
         std::vector<zmq::pollitem_t> items = { 
@@ -966,27 +1241,32 @@ public:
             if (items[0].revents & ZMQ_POLLIN) {
                 auto header = awaitReply();
 
-                if (!header) {
-                    throw std::runtime_error("Kill/Restart message received during throughput test!");
+                if (hasError(header)) {
+                    return getError(header);
                 }
 
                 received_from_coordinator = true;
-                if (*header == MessageType::THROUGHPUT_TEST_START) {
+                if (getResult(header) == MessageType::THROUGHPUT_TEST_START) {
                     break;
                 }
                 else {
-                    LOG(ERROR) << "Cannot join throughput test: expect THROUGHPUT_TEST_START, got header index=" << static_cast<int>(header.value());
-                    if (*header == MessageType::ABORT_PROTOCOL_VERSION_MISMATCH) {
-                        throw std::runtime_error("Aborting due to protocol version mismatch");
+                    LOG(ERROR) << "Cannot join throughput test: expect THROUGHPUT_TEST_START, got header index=" << static_cast<int>(getResult(header));
+                    if (getResult(header) == MessageType::ABORT_PROTOCOL_VERSION_MISMATCH) {
+                        return Error::KILLED_BY_COORDINATOR;
                     }
-                    return false;
+                    else if (getResult(header) == MessageType::PROTOCOL_KILLED) {
+                        return Error::KILLED_BY_COORDINATOR;
+                    }
+                    else {
+                        return Error::OUT_OF_SYNC;
+                    }
                 }
             }
         }
 
         if (!received_from_coordinator) {
             LOG(INFO) << "Not receiving message from coordinator after " << wait_timeout << " ms, terminating.";
-            return false;
+            return Error::TIMED_OUT;
         }
 
         LOG(INFO) << "Joining throughput test";
@@ -1002,13 +1282,15 @@ public:
             if (items[0].revents & ZMQ_POLLIN) {
                 auto header = awaitReply();
                 received_from_coordinator = true;
-                if (header == MessageType::THROUGHPUT_TEST_STOP) {
+                if (getResult(header) == MessageType::THROUGHPUT_TEST_STOP) {
                     LOG(INFO) << "End message received, stop test";
                     break;
                 }
+                else if (getResult(header) == MessageType::PROTOCOL_KILLED) {
+                    return Error::KILLED_BY_COORDINATOR;
+                }
                 else {
-                    DBG("WARNING: unknown message received");
-                    break;
+                    return Error::OUT_OF_SYNC;
                 }
             }
 
@@ -1024,31 +1306,36 @@ public:
 
         if (!received_from_coordinator) {
             LOG(INFO) << "Not receiving stop message from coordinator, terminating.";
-            return false;
+            return Error::TIMED_OUT;
         }
 
         auto header = awaitReply();
 
-        if (!header) {
-            throw std::runtime_error("Kill/Restart message received during throughput test!");
+        if (hasError(header)) { return getError(header); }
+
+        if (getResult(header) == MessageType::THROUGHPUT_TEST_SURVIVE) {
+            return Unit{};
         }
 
-        if (*header == MessageType::THROUGHPUT_TEST_SURVIVE) {
-            return true;
-        }
-        else if (*header == MessageType::THROUGHPUT_TEST_KICKOUT) {
-            return false;
-        }
-
-        LOG(ERROR) << "Client expect header SURVIVE or KICKOUT, got message index=" << (int)(*header) - (int)MessageType::ID_PARTY;
-        return false;
+        LOG(ERROR) << "Client expect header SURVIVE or KICKOUT, got message index=" << (int)(getResult(header)) - (int)MessageType::ID_PARTY;
+        return Error::OUT_OF_SYNC;
     }
 
     //==============================================================================
     /** Waits for an empty message over the socket and returns its type. */
-    std::optional<MessageType> awaitReply () {
+    expected<MessageType> awaitReply () {
         zmq::message_t reply;
-        socket.recv(&reply);
+
+        std::vector<zmq::pollitem_t> items = {
+            {static_cast<void*>(socket), 0, ZMQ_POLLIN, 0}
+        };
+        auto rc = zmq::poll(items, receive_timeout);
+        if (rc && (items[0].revents & ZMQ_POLLIN)) {
+            socket.recv(&reply);
+        }
+        else {
+            return Error::TIMED_OUT;
+        }
 
         MessageType header;
 
@@ -1056,23 +1343,43 @@ public:
         ss.write(reply.data<char>(), reply.size());
 
         boost::archive::binary_iarchive ia(ss);
-        ia >> header;
+
+        try {
+            ia >> header;
+        } catch (...) {
+            return Error::DESERIALIZE_FAIL;
+        }
 
         if (header == MessageType::PROTOCOL_RESTART) {
-            return std::nullopt;
+            return Error::RESTART;
+        }
+        if (header == MessageType::PROTOCOL_KILLED) {
+            return Error::KILLED_BY_COORDINATOR;
         }
         return header;
     }
 
     /** Waits for and deserializes a message of the given type over the socket. */
     template <typename T>
-    std::optional<T> awaitReply(MessageType type) {
+    expected<T> awaitReply(MessageType type, bool timers = false) {
         zmq::message_t reply;
 
         // Logging Performance data
         //TIMED_FUNC(timerObj);
+        std::vector<zmq::pollitem_t> items = {
+            {static_cast<void*>(socket), 0, ZMQ_POLLIN, 0}
+        };
 
-        socket.recv(&reply);
+        auto rc = zmq::poll(items, receive_timeout);
+        if (rc && (items[0].revents & ZMQ_POLLIN)) {
+            socket.recv(&reply);
+        }
+        else {
+            return Error::TIMED_OUT;
+        }
+
+
+        if (timers) LOG(INFO) << "Receiving Data " << msgs[1+(int)type-int(MessageType::ID_PARTY)];
 
         // Deserialize the message content to a column vector
         MessageType header;
@@ -1082,16 +1389,33 @@ public:
         ss.write(reply.data<char>(), reply.size());
 
         boost::archive::binary_iarchive ia(ss);
-        ia >> header;
+
+        try {
+            ia >> header;
+        } catch (...) {
+            return Error::DESERIALIZE_FAIL;
+        }
 
         // check if kill message received
         if (header == MessageType::PROTOCOL_RESTART) {
-            return std::nullopt;
+            return Error::RESTART;
+        }
+        if (header == MessageType::PROTOCOL_KILLED) {
+            return Error::KILLED_BY_COORDINATOR;
         }
 
-        ia >> body;
+        try  {
+            ia >> body;
+        } catch (...) {
+            return Error::OUT_OF_SYNC;
+        }
 
-        assert (type == header);
+        if (timers) LOG(INFO) << "Deserialization Completed for " << msgs[1+(int)type-int(MessageType::ID_PARTY)];
+
+        if (type != header) {
+            LOG(INFO) << "Expected " << msgs[1+(int)type-int(MessageType::ID_PARTY)] << ", got " << msgs[1+(int)header-int(MessageType::ID_PARTY)];
+            return Error::OUT_OF_SYNC;
+        }
         return body;
     }
 
@@ -1106,8 +1430,27 @@ public:
         // Push it through the socket
         std::string msg = ss.str();
         bool success = socket.send(msg.c_str(), msg.size());
+
+        if (!success) throw std::runtime_error("Failing to send message.");
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
+    }
+
+    void send (MessageType t, const PublicData& message) {
+        std::stringstream ss;
+
+        // Serilize column vector to string
+        boost::archive::binary_oarchive oa(ss);
+        oa << t;
+        oa << message;
+
+        // Push it through the socket
+        std::string msg = ss.str();
+        LOG(INFO) << "Pdata size = " << msg.size();
+        bool success = socket.send(msg.c_str(), msg.size());
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
         if (!success) throw std::runtime_error("Failing to send message.");
     }
+
 
     // Sends a message of the given type over the socket. */
     template <typename T>
@@ -1122,6 +1465,7 @@ public:
         // Push it through the socket
         std::string msg = ss.str();
         bool success = socket.send(msg.c_str(), msg.size());
+        LOG(INFO) << "MessageType: " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << " message size: " << msg.size() << " bytes";
         if (!success) throw std::runtime_error("Failing to send message.");
     }
 
@@ -1131,13 +1475,15 @@ public:
 
     SocketId getSocketId() { return socketId; }
 
+
 protected:
     //==============================================================================
     zmq::context_t context;
     zmq::socket_t socket;
     boost::uuids::uuid socketId;
-
+    std::chrono::milliseconds receive_timeout;
 };
 
 std::vector<SocketId> ZeroMQCoordinatorTransport::ids;
+std::vector<SocketId> ZeroMQGatheringTransport::ids;
 } // namespace ligero

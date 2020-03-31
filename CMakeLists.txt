@@ -33,7 +33,7 @@ execute_process(
 )
 
 include_directories( ${Boost_INCLUDE_DIR} )
-add_definitions(-DBOOST_ALLOW_DEPRECATED_HEADERS -DELPP_FEATURE_PERFORMANCE_TRACKING  -DELPP_THREAD_SAFE -DELPP_FORCE_USE_STD_THREAD -DPROTOCOL_VERSION_NUMBER=0x${GIT_COMMIT_HASH} -O3 -w -std=c++1z)
+add_definitions(-DELPP_FEATURE_PERFORMANCE_TRACKING  -DELPP_THREAD_SAFE -DELPP_FORCE_USE_STD_THREAD -DPROTOCOL_VERSION_NUMBER=0x${GIT_COMMIT_HASH} -O3 -w -std=c++1z)
 
 enable_testing()
 
@@ -56,6 +56,4 @@ ExternalProject_Add(nfl
 include_directories(${PROJECT_SOURCE_DIR}/depends/NFLlib/include)
 include_directories(${PROJECT_SOURCE_DIR}/depends/NFLlib/lib)
 
-#add_subdirectory (benchmarks)
-add_subdirectory (tests)
 add_subdirectory (src)

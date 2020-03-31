@@ -7,9 +7,12 @@
 #include "Common.hpp"
 #include "LatticeEncryption.hpp"
 #include <stdlib.h>
+#include <optional>
 #include "FiniteFields.hpp"
+#include "Hash.hpp"
+#include "ZkArgument.hpp"
 
-uint64_t ppp = 4611686018326724609;
+extern RegularInteger p_zk;
 
 namespace ligero {
 
@@ -22,9 +25,7 @@ class EncryptedClient {
         using cipherText = typename
                            lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>::cipherText;
 
-        CandidateIndices getCandidateIndices(size_t idx);
-
-        std::optional<lattice::key_pair<T, Degree, NbPrimesQ>> generateKeyPair(
+        expected<lattice::key_pair<T, Degree, NbPrimesQ>> generateKeyPair(
                     ZeroMQClientTransport &trans, nfl::gaussian<uint16_t, T, 2> &chi);
         std::vector<std::vector<mpz_class>> pruneAndReorderShares(
                                              const std::vector<mpz_class> &as,
@@ -34,9 +35,9 @@ class EncryptedClient {
                                              std::vector<size_t> bucketSize
                                          );
 
-        ProtocolConfig<T> registerAndAwaitConfiguration(ZeroMQClientTransport &transport, std::string ipAddress);
+        expected<ProtocolConfig<T>> registerAndAwaitConfiguration(ZeroMQClientTransport &transport, std::string ipAddress, nfl::gaussian<uint16_t, T, 2>& chi, zksnark::Prover<FieldT>* prover);
 
-        std::optional<std::tuple<
+        expected<std::tuple<
         std::vector<mpz_class>, // xcan
             std::vector<mpz_class>, // ycan
             std::vector<mpz_class>, // zcan
@@ -54,7 +55,7 @@ class EncryptedClient {
                 ProtocolConfig<T> &config
             );
 
-        std::optional<std::tuple<std::vector<mpz_class>, std::vector<mpz_class>, std::vector<mpz_class>>>
+        expected<std::tuple<std::vector<mpz_class>, std::vector<mpz_class>, std::vector<mpz_class>>>
         performModulusGeneration(
             ZeroMQClientTransport &transport,
             const std::vector<mpz_class> xcan,
@@ -65,7 +66,7 @@ class EncryptedClient {
             ProtocolConfig<T> &config
         );
 
-        std::optional<int> performJacobiTest(
+        expected<int> performJacobiTest(
             ZeroMQClientTransport &transport,
             const std::vector<mpz_class> &candidates,
             const std::vector<mpz_class> &p_shares,
@@ -73,7 +74,7 @@ class EncryptedClient {
             bool special
         );
 
-        std::optional<int> performGCDandJacobiTest(
+        expected<int> performGCDandJacobiTest(
             ZeroMQClientTransport &transport,
             const std::vector<mpz_class> &candidates,
             const std::vector<mpz_class> &p_shares,
@@ -156,12 +157,96 @@ class EncryptedClient {
         const Q &b() const {
             return _b;
         }
+				std::vector<mpz_class> &ss() {
+            return _ss;
+        }
+        const std::vector<mpz_class> &ss() const {
+            return _ss;
+        }
+
+
+				std::vector<mpz_class> &ssGCD() {
+            return _ssGCD;
+        }
+        const std::vector<mpz_class> &ssGCD() const {
+            return _ssGCD;
+        }
+
+        mpz_class &gammaSeed_g() {
+            return _gammaSeed;
+        }
+        const mpz_class &gammaSeed_g() const {
+            return _gammaSeed;
+        }
 
         std::vector<mpz_class> &moduli() {
             return _moduli;
         }
         const std::vector<mpz_class> &moduli() const {
             return _moduli;
+        }
+
+        std::vector<mpz_class> &sigma_r_GCD() {
+            return _sigma_r_GCD;
+        }
+        const std::vector<mpz_class> &sigma_r_GCD() const {
+            return _sigma_r_GCD;
+        }
+
+        std::vector<mpz_class> &sigma_x_GCD() {
+            return _sigma_x_GCD;
+        }
+        const std::vector<mpz_class> &sigma_x_GCD() const {
+            return _sigma_x_GCD;
+        }
+
+        std::vector<mpz_class> &exp_q_GCD() {
+            return _exp_q_GCD;
+        }
+        const std::vector<mpz_class> &exp_q_GCD() const {
+            return _exp_q_GCD;
+        }
+
+        std::vector<mpz_class> &sigma_e_GCD() {
+            return _sigma_e_GCD;
+        }
+        const std::vector<mpz_class> &sigma_e_GCD() const {
+            return _sigma_e_GCD;
+        }
+
+        std::vector<mpz_class> &sigma_a_GCD() {
+            return _sigma_a_GCD;
+        }
+        const std::vector<mpz_class> &sigma_a_GCD() const {
+            return _sigma_a_GCD;
+        }
+
+        std::vector<mpz_class> &sigma_g_GCD() {
+            return _sigma_g_GCD;
+        }
+        const std::vector<mpz_class> &sigma_g_GCD() const {
+            return _sigma_g_GCD;
+        }
+
+        std::vector<mpz_class> &sigma_z_GCD() {
+            return _sigma_z_GCD;
+        }
+        const std::vector<mpz_class> &sigma_z_GCD() const {
+            return _sigma_z_GCD;
+        }
+
+        std::vector<mpz_class> &sigma_q_GCD() {
+            return _sigma_q_GCD;
+        }
+        const std::vector<mpz_class> &sigma_q_GCD() const {
+            return _sigma_q_GCD;
+        }
+
+        std::vector<mpz_class> &sigmas_r() {
+            return _sigmas_r;
+        }
+        const std::vector<mpz_class> &sigmas_r() const {
+            return _sigmas_r;
         }
 
         std::vector<std::vector<mpz_class>> &coefs() {
@@ -188,6 +273,7 @@ class EncryptedClient {
         const mpz_class &finalModuli() const {
             return _finalModuli;
         }
+        
         mpz_class &finalModuli() {
             return _finalModuli;
         }
@@ -276,6 +362,13 @@ class EncryptedClient {
         }
         const std::vector<mpz_class> &rCRTs() const {
             return _rCRTs;
+        }
+
+        mpz_class &gcdRX() {
+            return _gcdRX;
+        }
+        const mpz_class &gcdRX() const {
+            return _gcdRX;
         }
 
         std::vector<mpz_class> &axGCD() {
@@ -475,91 +568,108 @@ class EncryptedClient {
         const std::vector<int> &sievingFlags() const {
             return _sievingFlags;
         }
-
-        /* ========== ========== */
-        void start(ZeroMQClientTransport& transport, size_t wait_timeout, size_t test_timeout,
-                   size_t data_size, size_t nb_max_send, const std::string &localUri = "n/a") {
-
-            auto proceed = transport.joinThroughputTest(wait_timeout, test_timeout,
-                           data_size, nb_max_send);
-
-            if (!proceed) {
-                LOG(INFO) << "Kicked out due to poor network connection";
-                return;
-            }
-
-            auto config = registerAndAwaitConfiguration(transport, localUri);
-            auto e = lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>(config);
-
-            std::optional<int> success;
-            try {
-                success = start_rsa_ceremony(transport, config, e);
-            } catch (const std::runtime_error &e) {
-                LOG(ERROR) << e.what();
-                LOG(INFO) << "Killed by coordinator, aborting";
-                exit(EXIT_FAILURE);
-            }
-            while (!success) {
-                //LOG(ERROR) <<
-                //           "First run terminated by coordinator, restarting and try again...";
-                LOG(INFO) << "Run failed, restarting";
-                // cleanup and restart
-                {
-                    Q tmp = Q{};
-                    si() = tmp;
-                    ei() = tmp;
-                    A() = tmp;
-                    b() = tmp;
-                    partial_e_shares() = tmp;
-                    as().first = tmp;
-                    as().second = tmp;
-                    es().first = tmp;
-                    es().second = tmp;
-                }
-
-                a_shares().clear();
-                b_shares().clear();
-                as_vec().clear();
-                es_vec().clear();
-                sievingFlags().clear();
-
-		
-                LOG(INFO) << "========== starting next run ==========";
-                try {
-                    success = start_rsa_ceremony(transport, config, e);
-                } catch (const std::runtime_error &e) {
-                    LOG(ERROR) << e.what();
-                    LOG(INFO) << "Killed by coordinator, aborting";
-                    exit(EXIT_FAILURE);
-                }
-                //if (!success) {
-                //    LOG(INFO) << "Run failed, restarting";
-                    //LOG(FATAL) << "Second run failed, aborting";
-                //}
-            }
+        ProtocolConfig<T> &config() {
+            return _config;
+        }
+        const ProtocolConfig<T> &config() const {
+            return _config;
         }
 
-        std::optional<int> start_rsa_ceremony(
+        /* ========== ========== */
+        void clearProofs() {
+            {
+                Q tmp = Q{};
+                si() = tmp;
+                ei() = tmp;
+                A() = tmp;
+                b() = tmp;
+                partial_e_shares() = tmp;
+                as().first = tmp;
+                as().second = tmp;
+                es().first = tmp;
+                es().second = tmp;
+            }
+
+            a_shares().clear();
+            b_shares().clear();
+            as_vec().clear();
+            es_vec().clear();
+            sievingFlags().clear();
+        }
+
+        expected<Unit> startHelper(ZeroMQClientTransport& transport, 
+            bool needRegistration,
+            const std::string& localUri,
+            std::unique_ptr<nfl::gaussian<uint16_t, T, 2>> &chi,
+            zksnark::Prover<FieldT>* prover
+        ) {
+            if (needRegistration) {
+                auto conf = registerAndAwaitConfiguration(transport, localUri, *chi, prover);
+                if (hasError(conf)) {
+                    LOG(INFO) << "Failed in registration, the error message is: " << showError(getError(conf));
+                    exit(EXIT_FAILURE);
+                }
+                config() = getResult(conf);
+            }
+
+            auto enc = lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>(config());
+
+            auto result = start_rsa_ceremony(transport, config(), enc);
+
+            if (!hasError(result)) {
+                return Unit{};
+            }
+
+            auto err = getError(result);
+            if (err == Error::MODULUS_NOT_FOUND) {
+                // restart without registration
+                clearProofs();
+                return startHelper(transport, false, localUri, chi, prover);
+            }
+            else if (err == Error::RESTART) {
+                clearProofs();
+                return startHelper(transport, true, localUri, chi, prover);
+            }
+            return err;
+        }
+
+        expected<Unit> start(
+            ZeroMQClientTransport& transport,
+            int sigma,
+            int lambda,
+            const std::string &localUri = "n/a",
+            zksnark::Prover<FieldT>* prover = static_cast<zksnark::Prover<FieldT>*>(NULL)
+        ) {
+            _fg = std::make_unique<nfl::FastGaussianNoise<uint16_t, T, 2>>(sigma, lambda, Degree);
+            _chi = std::make_unique<nfl::gaussian<uint16_t, T, 2>>(_fg.get());
+            _e = std::make_unique<lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>>(config(), *_chi);
+
+            return startHelper(transport, true, localUri, _chi, prover);
+        }
+
+        expected<int> start_rsa_ceremony(
             ZeroMQClientTransport &transport,
             ProtocolConfig<T> &config,
             lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ> &e
         ) {
+
+            transport.myTimers.begin(2,"1.b. Overall speed", 1);
             auto maybe_keys = generateKeyPair(transport, e.chi());
-            if (!maybe_keys) {
+            if (hasError(maybe_keys)) {
                 LOG(ERROR) << "Kill/Restart received when keygen";
-                return std::nullopt;
+                return getError(maybe_keys);
             }
-            auto [publicKey, secretKey] = *maybe_keys;
+            auto [publicKey, secretKey] = getResult(maybe_keys);
 
             // Await designation
             DBG("Awaiting designation.");
 
             auto maybe_assignment = transport.awaitReply();
-            if (!maybe_assignment) {
+            if (hasError(maybe_assignment)) {
                 LOG(ERROR) << "Kill/Restart when wait assignment";
-                return std::nullopt;
+                return getError(maybe_assignment);
             }
-            MessageType assignment = *maybe_assignment;
+            MessageType assignment = getResult(maybe_assignment);
             bool special = assignment == MessageType::ASSIGNMENT_P1;
             speciald() = special;
             DBG("Participant (" << socketId() << ") got my designation.");
@@ -567,193 +677,202 @@ class EncryptedClient {
             LOG(INFO) << "Connected to coordinator.";
 
             bool foundModuli = false;
-            int numberOfTrials = 0;
-            while (!foundModuli && (numberOfTrials < kTrialsThreshold)) {
-                numberOfTrials++;
 
-                LOG(INFO) << "Generating shares for pre-sieving.";
-                auto maybe_shares = generatePreSievingShares(e, transport, publicKey, secretKey,
-                                    special, config);
-                if (!maybe_shares) {
-                    LOG(ERROR) << "Kill/Restart received when generate presieve shares";
-                    return std::nullopt;
-                }
-                auto [xcan, ycan, zcan, xgcd, ygcd, zgcd, both_shares] = *maybe_shares;
+            LOG(INFO) << "Generating shares for pre-sieving.";
+            auto maybe_shares = generatePreSievingShares(e, transport, publicKey, secretKey,
+                                special, config);
+            if (hasError(maybe_shares)) {
+                LOG(ERROR) << "Kill/Restart received when generate presieve shares";
+                return getError(maybe_shares);
+            }
+            auto [xcan, ycan, zcan, xgcd, ygcd, zgcd, both_shares] = getResult(maybe_shares);
 
-                LOG(INFO) << "Generated shares for " << both_shares.size() / 2 <<
-                          " candidates.";
+            LOG(INFO) << "Generated shares for " << both_shares.size() / 2 <<
+                        " candidates.";
 
-                LOG(INFO) << "Using pre-sieved shares for candidate generation.";
-                auto maybe_modulus = performModulusGeneration(transport, xcan, ycan, zcan,
-                                     both_shares, special, config);
-                if (!maybe_modulus) {
-                    LOG(ERROR) << "Kill/Restart received when perform modulus generation";
-                    return std::nullopt;
-                }
-                auto [candidates, p_shares, q_shares] = *maybe_modulus;
+            LOG(INFO) << "Using pre-sieved shares for candidate generation.";
+            auto maybe_modulus = performModulusGeneration(transport, xcan, ycan, zcan,
+                                    both_shares, special, config);
+            if (hasError(maybe_modulus)) {
+                LOG(ERROR) << "Kill/Restart received when perform modulus generation";
+                return getError(maybe_modulus);
+            }
+            auto [candidates, p_shares, q_shares] = getResult(maybe_modulus);
 
-                {
-                    for (int i = 0; i < p_shares.size(); ++i) {
-                        if (special) {
-                            if (p_shares[i] % 4 != 3 || q_shares[i] % 4 != 3) {
-                                DBG("special");
-                                DBG("i = " << i);
-                                DBG("p_shares[i] " << p_shares[i]);
-                                DBG("p_shares[i] " << q_shares[i]);
-                                assert(false);
-                            }
-                        } else {
-                            if (p_shares[i] % 4 != 0 || q_shares[i] % 4 != 0) {
-                                DBG("ordinary");
-                                DBG("i = " << i);
-                                DBG("p_shares[i] " << p_shares[i]);
-                                DBG("p_shares[i] " << q_shares[i]);
-                                assert(false);
-                            }
+            {
+                for (int i = 0; i < p_shares.size(); ++i) {
+                    if (special) {
+                        if (p_shares[i] % 4 != 3 || q_shares[i] % 4 != 3) {
+                            DBG("special");
+                            DBG("i = " << i);
+                            DBG("p_shares[i] " << p_shares[i]);
+                            DBG("p_shares[i] " << q_shares[i]);
+                            assert(false);
+                        }
+                    } else {
+                        if (p_shares[i] % 4 != 0 || q_shares[i] % 4 != 0) {
+                            DBG("ordinary");
+                            DBG("i = " << i);
+                            DBG("p_shares[i] " << p_shares[i]);
+                            DBG("p_shares[i] " << q_shares[i]);
+                            assert(false);
                         }
                     }
                 }
+            }
 
-                auto maybe_discardFlags = transport.awaitReply<boost::dynamic_bitset<>>
-                                          (MessageType::POST_SIEVE);
-                if (!maybe_discardFlags) {
-                    LOG(ERROR) << "Kill/Restart when wait discard flags";
-                    return std::nullopt;
+            auto maybe_discardFlags = transport.awaitReply<boost::dynamic_bitset<>>
+                                        (MessageType::POST_SIEVE);
+            if (hasError(maybe_discardFlags)) {
+                LOG(ERROR) << "Kill/Restart when wait discard flags";
+                return getError(maybe_discardFlags);
+            }
+            boost::dynamic_bitset<> discardFlags = getResult(maybe_discardFlags);
+            candidates = discardCandidates(candidates, discardFlags);
+            p_shares = discardCandidates(p_shares, discardFlags);
+            q_shares = discardCandidates(q_shares, discardFlags);
+
+            // NOTE: here we need to adjust
+            //indicesArray = discardCandidates(indicesArray, discardFlags);
+
+            LOG(INFO) << "Running distributed primality test on the surviving " <<
+                        candidates.size() << " candidates.";
+
+            //Finally, we move onto the biprimality test, which we implement here
+            //in a loop because the coordinator may decide to run each test a variable
+            //number of times.
+            bool stillRunningTests = true;
+            bool ranJacobi = false;
+
+            while (stillRunningTests) {
+                auto success = transport.awaitReply();
+                if (hasError(success)) {
+                    LOG(ERROR) << "Kill/Restart received";
+                    return getError(success);
                 }
-                boost::dynamic_bitset<> discardFlags = *maybe_discardFlags;
-                candidates = discardCandidates(candidates, discardFlags);
-                p_shares = discardCandidates(p_shares, discardFlags);
-                q_shares = discardCandidates(q_shares, discardFlags);
+                switch (getResult(success)) {
+                    case MessageType::GAMMA_SHARES: {
+                        if (!ranJacobi) {
+                            LOG(INFO) << "Running Jacobi test on candidates.";
+                            ranJacobi = true;
+                        }
+                        auto maybe_JacobiResult = performJacobiTest(transport, candidates, p_shares, q_shares, special);
+                        if (hasError(maybe_JacobiResult)) {
+                            return getError(maybe_JacobiResult);
+                        }
 
-                // NOTE: here we need to adjust
-                //indicesArray = discardCandidates(indicesArray, discardFlags);
+                        auto maybe_discardFlags = transport.awaitReply<boost::dynamic_bitset<>>(MessageType::DISCARD_FLAGS);
+                        if (hasError(maybe_discardFlags)) {
+                            LOG(ERROR) << "Kill/Restart received during wait discard flags";
+                            return getError(maybe_discardFlags);
+                        }
+                        boost::dynamic_bitset<> discardFlags = getResult(maybe_discardFlags);
 
-                LOG(INFO) << "Running distributed primality test on the surviving " <<
-                          candidates.size() << " candidates.";
+                        candidates = discardCandidates(candidates, discardFlags);
+                        p_shares = discardCandidates(p_shares, discardFlags);
+                        q_shares = discardCandidates(q_shares, discardFlags);
 
-                //Finally, we move onto the biprimality test, which we implement here
-                //in a loop because the coordinator may decide to run each test a variable
-                //number of times.
-                bool stillRunningTests = true;
-                bool ranJacobi = false;
-
-                while (stillRunningTests) {
-                    auto success = transport.awaitReply();
-                    if (!success) {
-                        LOG(ERROR) << "Kill/Restart received";
-                        return std::nullopt;
+                        break;
                     }
-                    switch (*success) {
-                        case MessageType::GAMMA_SHARES: {
-                            if (!ranJacobi) {
-                                LOG(INFO) << "Running Jacobi test on candidates.";
-                                ranJacobi = true;
-                            }
-                            auto maybe_JacobiResult = performJacobiTest(transport, candidates, p_shares, q_shares, special);
-                            if (!maybe_JacobiResult) {
-                                return std::nullopt;
-                            }
+                    case MessageType::GCD_RAND_SHARES: {
+                        LOG(INFO) << "Running GCD test on candidates.";
 
-                            auto maybe_discardFlags = transport.awaitReply<boost::dynamic_bitset<>>(MessageType::DISCARD_FLAGS);
-                            if (!maybe_discardFlags) {
-                                LOG(ERROR) << "Kill/Restart received during wait discard flags";
-                                return std::nullopt;
-                            }
-                            boost::dynamic_bitset<> discardFlags = *maybe_discardFlags;
-
-                            candidates = discardCandidates(candidates, discardFlags);
-                            p_shares = discardCandidates(p_shares, discardFlags);
-                            q_shares = discardCandidates(q_shares, discardFlags);
-
-                            break;
+                        if (candidates.size() > 1) {
+                            candidates.resize(1);
+                            p_shares.resize(1);
+                            q_shares.resize(1);
                         }
-                        case MessageType::GCD_RAND_SHARES: {
-                            LOG(INFO) << "Running GCD test on candidates.";
 
-                            if (candidates.size() > 1) {
-                                candidates.resize(1);
-                                p_shares.resize(1);
-                                q_shares.resize(1);
-                            }
+                        auto maybe_JacobiGCDResult = performGCDandJacobiTest(
+                                transport,
+                                candidates,
+                                p_shares,
+                                q_shares,
+                                xgcd,
+                                ygcd,
+                                zgcd,
+                                special,
+                                config
+                                );
 
-                            auto maybe_JacobiGCDResult = performGCDandJacobiTest(
-                                    transport,
-                                    candidates,
-                                    p_shares,
-                                    q_shares,
-                                    xgcd,
-                                    ygcd,
-                                    zgcd,
-                                    special,
-                                    config
-                                    );
-
-                            if (!maybe_JacobiGCDResult) {
-                                return std::nullopt;
-                            }
-
-                            auto maybe_discardFlags = transport.awaitReply<boost::dynamic_bitset<>>(MessageType::DISCARD_FLAGS);
-                            if (!maybe_discardFlags) {
-                                LOG(ERROR) << "Kill/Restart received during wait discard flags";
-                                return std::nullopt;
-                            }
-                            boost::dynamic_bitset<> discardFlags = *maybe_discardFlags;
-
-                            candidates = discardCandidates(candidates, discardFlags);
-                            p_shares = discardCandidates(p_shares, discardFlags);
-                            q_shares = discardCandidates(q_shares, discardFlags);
-
-                            break;
+                        if (hasError(maybe_JacobiGCDResult)) {
+                            return getError(maybe_JacobiGCDResult);
                         }
-                        case MessageType::FOUND_MODULI:
-                            foundModuli = true;
-                            stillRunningTests = false;
-                            break;
-                        case MessageType::NO_MODULI: {
-                            LOG(INFO) << "Did not find a modulus. Restarting";
-                            stillRunningTests = false;
-                            break;
+
+                        auto maybe_discardFlags = transport.awaitReply<boost::dynamic_bitset<>>(MessageType::DISCARD_FLAGS);
+                        if (hasError(maybe_discardFlags)) {
+                            LOG(ERROR) << "Kill/Restart received during wait discard flags";
+                            return getError(maybe_discardFlags);
                         }
-                        default:
-                            throw std::runtime_error("Received a message type out of order.");
+                        boost::dynamic_bitset<> discardFlags = getResult(maybe_discardFlags);
+
+                        candidates = discardCandidates(candidates, discardFlags);
+                        p_shares = discardCandidates(p_shares, discardFlags);
+                        q_shares = discardCandidates(q_shares, discardFlags);
+
+                        break;
+                    }
+                    case MessageType::FOUND_MODULI:
+                        foundModuli = true;
+                        stillRunningTests = false;
+                        break;
+                    case MessageType::NO_MODULI: {
+                        LOG(INFO) << "Did not find a modulus. Restarting";
+                        stillRunningTests = false;
+                        transport.send(MessageType::NO_MODULI_VERIFICATION_SHARES, std::make_pair(x_shares(), std::make_pair(y_shares(), z_shares())));
+                        auto maybeNoModuliVerification = transport.awaitReply<bool>(MessageType::NO_MODULI_VERIFICATION_FINISHED);
+                        if (hasError(maybe_discardFlags)) {
+                            LOG(ERROR) << "Kill/Restart received on no moduli verification";
+                            return getError(maybe_discardFlags);
+                        }
+
+                        bool noModuliVerification = getResult(maybeNoModuliVerification);
+                        if (!noModuliVerification) {
+                            transport.send(MessageType::BAD_EVENT_DATA_SHARES, BadEventData<T, Degree, NbPrimesQ>(jacobiSeedShares(), jacobiAndGCDSeedShares(), si(), ei(), bi(), gcdRX(), ss()));
+
+                            transport.awaitReply<bool>(MessageType::BAD_EVENT_DATA_RESPONSE);
+                        }
+                        return Error::MODULUS_NOT_FOUND;
+
+                    }
+                    default:
+                        return Error::OUT_OF_SYNC;
+                }
+            }
+
+            if (foundModuli) {
+                LOG(INFO) << "Found " << candidates.size() << " valid moduli:";
+
+                for (int i = 0; i < candidates.size(); ++i) {
+                    LOG(INFO) << candidates[i];
+                }
+                size_t idx = 0;
+                bool rec = false;
+                for (; idx < candidatesCAN().size(); idx++) {
+                    if (candidatesCAN()[idx] == candidates[0]) {
+                        rec = true;
+                        break;
                     }
                 }
 
-                if (foundModuli) {
-                    LOG(INFO) << "Found " << candidates.size() << " valid moduli:";
+                if (!rec) {
+                    // handle error
+                }
 
-                    for (int i = 0; i < candidates.size(); ++i) {
-                        LOG(INFO) << candidates[i];
-                    }
-                    size_t idx = 0;
-                    bool rec = false;
-                    for (; idx < candidatesCAN().size(); idx++) {
-                        if (candidatesCAN()[idx] == candidates[0]) {
-                            rec = true;
-                            break;
-                        }
-                    }
+                candidateIndices() = getCandidateIndices(idx, index_candidates());
+                final_index() = idx;
+                finalModuli() = candidates[0];
+                gammaExponent() = ((speciald() ? mpz_class(candidates[0]+1) : mpz_class(0)) - p_shares[0] - q_shares[0])/4;
 
-                    if (!rec) {
-                        // handle error
-                    }
-
-                    candidateIndices() = getCandidateIndices(idx);
-                    final_index() = idx;
-                    finalModuli() = candidates[0];
-                    gammaExponent() = ((speciald() ? mpz_class(candidates[0]+1) : mpz_class(0)) - p_shares[0] - q_shares[0])/4;
-
-                    //std::cout<< speciald() << ": p_shares[0] = " << p_shares[0] << std::endl;
-
+                if (config.protocolMode() == ProtocolMode::RECORD || config.protocolMode() == ProtocolMode::REPLAY) {
                     // The following code transmits the p shares and q shares in the clear to the coordinator.
                     // This is ONLY for checking the result. We need to remove this part finally.
-                    DBG("Participant (" << socketId() <<
-                        ") Transmitting the p and q values in the clear for debugging purposes only.");
-
-                    transport.send(MessageType::MUTHU_ACK, int(1));
-                    DBG("Participant (" << socketId() << ") done.");
-
+                    // DBG("Participant (" << socketId() <<
+                    //     ") Transmitting the p and q values in the clear for debugging purposes only.");
+                    transport.send(MessageType::P_CLEAR_DEBUG, std::pair{p_shares, q_shares});
+                    transport.awaitReply<int>(MessageType::P_CLEAR_DEBUG);
                 }
+
             }
 
             return 0;
@@ -763,7 +882,7 @@ class EncryptedClient {
         /*
          * Gathers and returns all public data.
          */
-        void gatherData(PublicData &d, SecretData &e) {
+        void gatherData(PublicData &d, SigmaProtocolPublicData &s, SecretData &e) {
 
             // Shift a and bi to poly representation
             A().invntt_pow_invphi();
@@ -771,11 +890,9 @@ class EncryptedClient {
 
             // Compute all q polys
             // ========================================================================================
-
             using Qwide = nfl::poly_p<T, 2 * Degree, NbPrimesQ>;
 
             // transform Q/P to FFT polynomial
-
             mpz_class q_over_p = 1;
             for (auto i = NbPrimesP; i < NbPrimesQ; i++) {
                 q_over_p *= nfl::params<T>::P[i];
@@ -842,6 +959,7 @@ class EncryptedClient {
                 target = target * qdivp;
                 delete (ptr);
             };
+
             auto convert_noscale_mpz_P = [&](std::vector<mpz_class> &source,
             P & target) -> void {
                 // preparing the message polynomial
@@ -873,18 +991,20 @@ class EncryptedClient {
                 tmp += (speciald() ? a.back() * 3 : mpz_class(0));
                 return tmp;
             };
+
             auto positiveRemainder = [&](mpz_class & a, mpz_class & b) -> mpz_class {
                 return ((a % b + b) % b);
             };
 
             Q q_r3, q_r4_1, q_r4_2, q_r5_1, q_r5_2, q_r6;
+
             std::vector<mpz_class> q_p_r7, q_q_r7, q_r8;
             std::vector<mpz_class> q_p_prod_r7, q_q_prod_r7;
             std::vector<mpz_class> q_p_prod_r11, q_q_prod_r11;
             std::vector<mpz_class> q_pq_r11, q_r_r11,r_CRTs;
 						std::vector<mpz_class> q_r12;
 
-						// Round 3
+            // Round 3
             {
                 Qwide A_wide, siP_wide, eiP_wide, bi_wide;
 
@@ -980,8 +1100,6 @@ class EncryptedClient {
             y_prime.set_mpz(s_coeff);
             std::for_each(s_coeff.begin(), s_coeff.end(), mpz_clear);
 
-            //y_prime.invntt_pow_invphi();
-
             Q z_prime;
             convert_mpz(z_shares(), z_prime);
             z_prime.invntt_pow_invphi();
@@ -1061,6 +1179,7 @@ class EncryptedClient {
                 check(left);                    // Make sure that poly left is indeed a ring element
                 deriveQ(q_r5_2, left);          // Now solve for q coefs
             }
+
             g_r().invntt_pow_invphi();
             partial_xyz_shares().invntt_pow_invphi();
             xyz_sum().first.invntt_pow_invphi();
@@ -1098,21 +1217,21 @@ class EncryptedClient {
             std::vector<mpz_class> by_shares;
             std::vector<size_t> coefIndices = {0, 1, 2, 3, 4, 5};
             std::vector<size_t> axbyindices;
+
             // These are common for Rounds 7,8,11,12
             auto [alphasCAN, _bsz] = math::fixed_bucket_n_primes(1048, primesCAN, 175);
             std::vector<mpz_class> alphasPSprod_CAN, moduli_CAN;
-            auto [alphasPS, bucketSizePS] = math::balanced_bucket_n_primes(1000, primesPS,
-                                            175, 1);
+            auto [alphasPS, bucketSizePS] = math::balanced_bucket_n_primes(1000, primesPS, 175, 1);
             mpz_class alphasPSprod = mpz_class(4);
+            
             for (size_t j = 0; j < alphasPS.size(); ++j) {
                 alphasPSprod *= alphasPS[j];
             }
+
             mpz_class recomputed_pshare;
             mpz_class recomputed_qshare;
 
-            // Round 7
-            // and Round 8
-            // axby[k] = math::mod((ax()[k] * q_sharesCRTs()[k] + by()[k] * p_sharesCRTs()[k] + zcan[k]), alphasCAN[j]);
+            // Round 7 and 8
             {
                 size_t alphaCANidx = 0;
 
@@ -1125,17 +1244,14 @@ class EncryptedClient {
                     }
 
                     alphasPSprod_CAN.push_back(alphasPSprodCAN);
+
                     // pushing pshare items
-                    recomputed_pshare = modifiedProduct(moduli(), coefIndices, x_shares(),
-                                                        candidateIndices().ps);
+                    recomputed_pshare = modifiedProduct(moduli(), coefIndices, x_shares(), candidateIndices().ps);
                     mpz_class pshare_quotient = (recomputed_pshare / alphasPSprod) % alphasCAN[alphaCANidx];
 
-                    mpz_class recomputed_pshare_CAN = modifiedProduct(moduliCAN, coefIndices,
-                                                      x_shares(), candidateIndices().ps);
-                    mpz_class axshares = math::mod(p_sharesCRTs()[final_index() * alphasCAN.size() +
-                                                        alphaCANidx] - x_shares()[j], alphasCAN[alphaCANidx]);
-                    mpz_class pdividend = axshares + x_shares()[j] - (recomputed_pshare_CAN -
-                                          pshare_quotient * alphasPSprodCAN);
+                    mpz_class recomputed_pshare_CAN = modifiedProduct(moduliCAN, coefIndices, x_shares(), candidateIndices().ps);
+                    mpz_class axshares = math::mod(p_sharesCRTs()[final_index() * alphasCAN.size() + alphaCANidx] - x_shares()[j], alphasCAN[alphaCANidx]);
+                    mpz_class pdividend = axshares + x_shares()[j] - (recomputed_pshare_CAN - pshare_quotient * alphasPSprodCAN);
                     mpz_class p_shareCRT_quotient  = (pdividend / alphasCAN[alphaCANidx]);
                     assert(pdividend - p_shareCRT_quotient * alphasCAN[alphaCANidx] == 0);
 
@@ -1147,16 +1263,12 @@ class EncryptedClient {
                     }
 
                     //pushing qshare items
-                    recomputed_qshare = modifiedProduct(moduli(), coefIndices, y_shares(),
-                                                        candidateIndices().ps);
+                    recomputed_qshare = modifiedProduct(moduli(), coefIndices, y_shares(), candidateIndices().ps);
                     mpz_class qshare_quotient = (recomputed_qshare / alphasPSprod) % alphasCAN[alphaCANidx];
 
-                    mpz_class recomputed_qshare_CAN = modifiedProduct(moduliCAN, coefIndices,
-                                                      y_shares(), candidateIndices().ps);
-                    mpz_class byshares = math::mod(q_sharesCRTs()[final_index() * alphasCAN.size() +
-                                                        alphaCANidx] - y_shares()[j], alphasCAN[alphaCANidx]);
-                    mpz_class qdividend = byshares + y_shares()[j] - (recomputed_qshare_CAN -
-                                          qshare_quotient * alphasPSprodCAN);
+                    mpz_class recomputed_qshare_CAN = modifiedProduct(moduliCAN, coefIndices, y_shares(), candidateIndices().ps);
+                    mpz_class byshares = math::mod(q_sharesCRTs()[final_index() * alphasCAN.size() + alphaCANidx] - y_shares()[j], alphasCAN[alphaCANidx]);
+                    mpz_class qdividend = byshares + y_shares()[j] - (recomputed_qshare_CAN - qshare_quotient * alphasPSprodCAN);
                     mpz_class q_shareCRT_quotient  = (qdividend / alphasCAN[alphaCANidx]);
                     assert(qdividend - q_shareCRT_quotient * alphasCAN[alphaCANidx] == 0);
 
@@ -1164,8 +1276,7 @@ class EncryptedClient {
                         mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
                         q_q_prod_r7.push_back(positiveRemainder(qshare_quotient, prime));
                         q_q_r7.push_back(positiveRemainder(q_shareCRT_quotient, prime));
-                        by_shares.push_back(positiveRemainder(byshares,
-                                                              prime)); //mpz_class(nfl::params<uint64_t>::P[i])));
+                        by_shares.push_back(positiveRemainder(byshares, prime)); //mpz_class(nfl::params<uint64_t>::P[i])));
                     }
                     size_t pos = alphasCAN.size() * final_index() + alphaCANidx;
                     axbyindices.push_back(pos);
@@ -1174,6 +1285,7 @@ class EncryptedClient {
                                                                alphasPSprodCAN) + z_shares()[j] - axby()[pos]);
                     mpz_class quotient = dividend / alphasCAN[alphaCANidx];
                     assert(dividend - quotient * alphasCAN[alphaCANidx] == 0);
+                    
                     for (size_t i = 0; i < NbPrimesQ; i ++) {
                         mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
                         q_r8.push_back(positiveRemainder(quotient, prime));
@@ -1183,17 +1295,16 @@ class EncryptedClient {
                 }
             }
 
-            auto [alphasGCD, _drop_val] = math::fixed_bucket_n_primes(3096, primesGCD,175);
+            auto [alphasGCD, _drop_val] = math::fixed_bucket_n_primes(3210, primesGCD,175);
             std::vector<mpz_class> alphasPSprod_GCD, moduli_GCD;
             std::vector<mpz_class> ax_shares_GCD;
             std::vector<mpz_class> by_shares_GCD;
+            std::vector<mpz_class> ss_GCD;
+            std::vector<mpz_class> finalModuli_GCD;
 
             std::vector<mpz_class> expsharesGCD;
+
             // Round 11
-            // ax_shares[rc] = rCRTs()[rc] - x[rc];
-            // auto bCRT = math::crt_deconstruct(p_shares[i] + q_shares[i] - maybeOne, alphasGCD);
-            // by_shares[rc] = p_plus_qCRTs[rc] - y[rc];
-            // p_plus_qCRTs[rc] = bCRT[j];
             // and Round 12
             {
                 size_t alphaGCDidx = 0;
@@ -1231,7 +1342,6 @@ class EncryptedClient {
                     mpz_class rquotientGCD = rdividendGCD/alphasGCD[alphaGCDidx];
                     assert(rdividendGCD - rquotientGCD * alphasGCD[alphaGCDidx] == 0);
 
-
                     for (size_t i = 0; i < NbPrimesQ; i ++) {
                         mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
                         r_CRTs.push_back(positiveRemainder(rCRTs()[alphaGCDidx], prime));
@@ -1239,96 +1349,26 @@ class EncryptedClient {
                         ax_shares_GCD.push_back(positiveRemainder(axsharesGCD, prime));
                     }
 
-		
-										//axbyGCD()[k] = math::mod((axGCD()[k] * p_plus_qCRTs[k] + byGCD()[k] * rCRTs()[k]
-                    //                      + z[k]), alphasGCD[j]);
+                    mpz_class dividend = axGCD()[alphaGCDidx] * ( 
+                        recomputed_pshare_GCD + recomputed_qshare_GCD - maybeOne - qshare_quotient * alphasPSprodGCD - pshare_quotient * alphasPSprodGCD 
+                        ) + byGCD()[alphaGCDidx] * (rCRTs()[alphaGCDidx]) + z_shares()[j] + math::mod(ss()[0],alphasGCD[alphaGCDidx])*math::mod(finalModuli(),alphasGCD[alphaGCDidx]) - axbyGCD()[alphaGCDidx];
 
-                    mpz_class dividend = axGCD()[alphaGCDidx] * ( recomputed_pshare_GCD + recomputed_qshare_GCD - maybeOne - qshare_quotient * alphasPSprodGCD - pshare_quotient * alphasPSprodGCD ) 
-																		+ byGCD()[alphaGCDidx] * (rCRTs()[alphaGCDidx]) + z_shares()[j] - axbyGCD()[alphaGCDidx];
-										assert(dividend % alphasGCD[alphaGCDidx] == 0);
+					assert(dividend % alphasGCD[alphaGCDidx] == 0);
                     mpz_class quotient = dividend / alphasGCD[alphaGCDidx];
                     assert(dividend - quotient * alphasGCD[alphaGCDidx] == 0);
-                    for (size_t i = 0; i < NbPrimesQ; i ++) {
+                    
+                    for (size_t i = 0; i < NbPrimesQ; i++) {
                         mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
+                        mpz_class out = math::mod(ss()[0],alphasGCD[alphaGCDidx]);
+                        ss_GCD.push_back(positiveRemainder(out,prime));
+                        out = math::mod(finalModuli(),alphasGCD[alphaGCDidx]);
+                        finalModuli_GCD.push_back(positiveRemainder(out,prime));
                         q_r12.push_back(positiveRemainder(quotient, prime));
                     }
 
                     alphaGCDidx++;
                 }
             }
-
-
-
-        // Sigma Protocol
-        //
-        // Step 1: Commit to r and x before executing the sigma protocol
-         std::vector<mpz_class> sigmas_r(128);
-         std::vector<mpz_class> sigma_r_GCD(129 * NbPrimesP * alphasGCD.size()),
-         sigma_x_GCD(NbPrimesP * alphasGCD.size()), exp_q_GCD (129 * NbPrimesP * alphasGCD.size());;
-         for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
-            mpz_class exponentGCD = math::mod(gammaExponent(), alphasGCD[alphaGCDidx]);
-            
-            mpz_class exponentGCDquotient = (4 * exponentGCD - ((speciald() ? math::mod(finalModuli(),
-                                                                          alphasGCD[alphaGCDidx]) + 1 : mpz_class(0)) - expsharesGCD[alphaGCDidx]));
-            assert(math::mod(exponentGCDquotient, alphasGCD[alphaGCDidx]) == 0);
-            exponentGCDquotient /= alphasGCD[alphaGCDidx];
-             for (size_t i = 0; i < NbPrimesP; i ++) {
-                mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
-                sigma_x_GCD[i * alphasGCD.size() + alphaGCDidx] = positiveRemainder(exponentGCD, prime);
-                exp_q_GCD[i * alphasGCD.size() + alphaGCDidx] 
-												                      = positiveRemainder(exponentGCDquotient, prime);
-            }
-        }
-        // assuming that second jacobi test only has one moduli and security parameter is 128.
-        for (size_t j = 0; j < 128; j++) {
-						mpz_class sigma_r = math::generateRandomValue(mpz_class(std::random_device()()), 2048 + 128);
-						sigmas_r[j] = sigma_r;
-            for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
-                mpz_class sigma_rGCD = math::mod(sigma_r, alphasGCD[alphaGCDidx]);
-                for (size_t i = 0; i < NbPrimesP; i ++) {
-                    mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
-                    sigma_r_GCD[i * alphasGCD.size() * 128 + j * alphasGCD.size() + alphaGCDidx] 
-														                                    = positiveRemainder(sigma_rGCD, prime);
-                }
-                
-            }
-            
-        }
-
-        // Create Merkle tree for committing to a block that contain the rAndX = concatenation of exp_x_GCD and exp_r_GCD
-        // Step 2: Executing the Sigma Protocol
-        std::vector<mpz_class> sigmas_e(128), sigmas_z(128);
-        std::vector<mpz_class> sigma_e_GCD(128 * alphasGCD.size() * NbPrimesP);
-        std::vector<mpz_class> sigma_z_GCD(128 * alphasGCD.size() * NbPrimesP);
-        std::vector<mpz_class> sigma_q_GCD(128 * alphasGCD.size() * NbPrimesP);
-        std::vector<mpz_class> sigmas_a(128);
-        // First completing the sigma ZK protocol and then verifying the main ZK proof
-        for (size_t j = 0 ; j < 128; j++) {
-
-            //mpz_class sigma_r = math::generateRandomValue(mpz_class(std::random_device()()), 2 * config.pbs() + 48 + config.lambda());
-            mpz_class sigma_a = math::powm(gBeforeExp()[j], sigmas_r[j], finalModuli());
-            sigmas_a[j] = sigma_a;
-            sigmas_e[j] = math::generateRandomValue(mpz_class(std::random_device()()),
-                    128); //obtain from Fiat-Shamir
-            sigmas_z[j] = sigmas_r[j] + sigmas_e[j] * gammaExponent();
-            for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
-                mpz_class sigma_xGCD = math::mod(gammaExponent(), alphasGCD[alphaGCDidx]);
-                mpz_class sigma_rGCD = math::mod(sigmas_r[j], alphasGCD[alphaGCDidx]);
-                mpz_class sigma_eGCD = math::mod(sigmas_e[j], alphasGCD[alphaGCDidx]);
-                mpz_class sigma_zGCD = math::mod(sigmas_z[j], alphasGCD[alphaGCDidx]);
-
-                mpz_class dividend = sigma_zGCD - (sigma_rGCD + sigma_eGCD * sigma_xGCD);
-
-                assert(dividend % alphasGCD[alphaGCDidx] == 0);
-                mpz_class quotient = dividend / alphasGCD[alphaGCDidx];
-                for (size_t i = 0; i < NbPrimesP; i++) {
-                    mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
-                    sigma_e_GCD [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(sigma_eGCD,prime);
-                    sigma_q_GCD [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(quotient,prime);
-                    sigma_z_GCD [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(sigma_zGCD,prime);
-                }
-            }
-        }
             // Data Extraction
             // ========================================================================================
 
@@ -1339,12 +1379,6 @@ class EncryptedClient {
                 }
             };
 
-            auto dataExtractQ = [&](std::vector<uint64_t> &assignee, Q & target) -> void {
-                assignee.assign(
-                    target.poly_obj().data(),
-                    target.poly_obj().data() + (size_t)target.nmoduli * (size_t)target.degree);
-            };
-
             auto dataExtractMatrix = [&](std::vector<std::vector<uint64_t>> &assignee,
             std::vector<std::vector<mpz_class>> &target) -> void {
                 assignee.resize(target.size());
@@ -1352,40 +1386,6 @@ class EncryptedClient {
                     assignee[row].resize(target[row].size());
                     for (size_t col = 0; col < target.size(); col++) {
                         assignee[row][col] = mpz_get_ui(target[row][col].get_mpz_t());
-                    }
-                }
-            };
-
-            auto dataExtractVectorCRT = [&](std::vector<uint64_t> &assignee,
-            std::vector<mpz_class> &target) -> void {
-                assignee.resize(target.size()* NbPrimesQ);
-                size_t ctr = 0;
-                for (size_t idx = 0; idx < target.size(); idx++) {
-                    for (size_t pidx = 0; pidx < NbPrimesQ; pidx++) {
-                        mpz_class prime = mpz_class(nfl::params<uint64_t>::P[pidx]);
-                        mpz_class u = positiveRemainder(target[idx], prime);
-                        assignee[ctr++] = mpz_get_ui(u.get_mpz_t());
-                    }
-                }
-            };
-
-            auto dataExtractVector = [&](std::vector<uint64_t> &assignee,
-            std::vector<mpz_class> &target) -> void {
-                assignee.resize(target.size());
-                for (size_t idx = 0; idx < target.size(); idx++) {
-                    assignee[idx] = mpz_get_ui(target[idx].get_mpz_t());
-                }
-            };
-
-            auto dataExtractSubVector = [&](std::vector<uint64_t> &assignee,
-            std::vector<mpz_class> &target, std::vector<size_t> &idxs) -> void {
-                assignee.resize(target.size()*NbPrimesQ);
-                int ctr = 0;
-                for (size_t idx = 0; idx < idxs.size(); idx++) {
-                    for (size_t pidx = 0; pidx < NbPrimesQ; pidx++) {
-                        mpz_class prime = mpz_class(nfl::params<uint64_t>::P[pidx]);
-                        mpz_class u = positiveRemainder(target[idxs[idx]], prime);
-                        assignee[ctr++] = mpz_get_ui(u.get_mpz_t());
                     }
                 }
             };
@@ -1401,13 +1401,16 @@ class EncryptedClient {
                 else assignee.assign(idxs.begin(), idxs.end());
             };
 
+	    // Extract Gamm Seed for Sigma Protocol
+	    d.gammaSeed = gammaSeed_g();
+
             // Randomness attached to surviving candidates
             std::vector<size_t> indices(candidateIndices().can);
             indices.insert(indices.end(), candidateIndices().ps.begin(), candidateIndices().ps.end());
             indices.insert(indices.end(), candidateIndices().gcd.begin(), candidateIndices().gcd.end());
 
             // Alphas
-            dataExtractVectorCRT(d.ps,       alphasPS);
+            dataExtractVectorCRT<NbPrimesQ>(d.ps,      alphasPS);
 
             // Keygen
             dataExtractQ(d.A,                A());
@@ -1456,28 +1459,31 @@ class EncryptedClient {
             dataExtractQ(e.q_r6,             q_r6);
 
             // Round7
+            dataExtractSubVector<NbPrimesQ>(e.y_sharesCAN, y_shares(), candidateIndices().can);
+            dataExtractSubVector<NbPrimesQ>(e.y_sharesPS,  y_shares(), candidateIndices().ps);
+            dataExtractSubVector<NbPrimesQ>(e.x_sharesCAN, x_shares(), candidateIndices().can);
+            dataExtractSubVector<NbPrimesQ>(e.x_sharesPS,  x_shares(), candidateIndices().ps);
+
+            dataExtractVectorCRT<NbPrimesQ>(d.coefsCAN,	    moduli_CAN);
+            dataExtractVectorCRT<NbPrimesQ>(d.cans,         alphasCAN);
+            dataExtractVectorCRT<NbPrimesQ>(d.prodcans,     alphasPSprod_CAN);
+
+            d.indicesPS.assign(candidateIndices().ps.begin(),   candidateIndices().ps.end());
+            d.indicesCAN.assign(candidateIndices().can.begin(), candidateIndices().can.end());
+            d.indicesGCD.assign(candidateIndices().gcd.begin(), candidateIndices().gcd.end());
+
             dataExtractVector(d.by_shares,      by_shares);
-            dataExtractSubVector(e.y_sharesCAN, y_shares(), candidateIndices().can);
-            dataExtractSubVector(e.y_sharesPS,  y_shares(), candidateIndices().ps);
             dataExtractVector(d.ax_shares,      ax_shares);
-            dataExtractSubVector(e.x_sharesCAN, x_shares(), candidateIndices().can);
-            dataExtractSubVector(e.x_sharesPS,  x_shares(), candidateIndices().ps);
-            d.indicesPS.assign(candidateIndices().ps.begin(), candidateIndices().ps.end());
-            d.indicesCAN.assign(candidateIndices().can.begin(),candidateIndices().can.end());
-            d.indicesGCD.assign(candidateIndices().gcd.begin(),candidateIndices().gcd.end());
-            dataExtractVectorCRT(d.coefsCAN,	moduli_CAN);
-            dataExtractVectorCRT(d.cans,        alphasCAN);
-            dataExtractVectorCRT(d.prodcans,    alphasPSprod_CAN);
             dataExtractVector(e.q_p_prod_r7,    q_p_prod_r7);
             dataExtractVector(e.q_p_r7,         q_p_r7);
             dataExtractVector(e.q_q_prod_r7,    q_q_prod_r7);
             dataExtractVector(e.q_q_r7,         q_q_r7);
 
             // Round8
-            dataExtractSubVector(e.z_sharesCAN, z_shares(), candidateIndices().can);
-            dataExtractSubVector(d.ax,          ax(), axbyindices);
-            dataExtractSubVector(d.by,          by(), axbyindices);
-            dataExtractSubVector(d.axby,        axby(), axbyindices);
+            dataExtractSubVector<NbPrimesQ>(e.z_sharesCAN, z_shares(), candidateIndices().can);
+            dataExtractSubVector<NbPrimesQ>(d.ax,		    ax(), axbyindices);
+            dataExtractSubVector<NbPrimesQ>(d.by,		    by(), axbyindices);
+            dataExtractSubVector<NbPrimesQ>(d.axby,	    axby(), axbyindices);
             dataExtractVector(e.q_r8,           q_r8);
 
             // Bounding x_shares, y_shares and z_shares
@@ -1486,12 +1492,41 @@ class EncryptedClient {
             pickSubVector(vars, x_shares(), indices);
             pickSubVector(vars, y_shares(), indices);
             pickSubVector(vars, z_shares(), candidateIndices().can);
+            
+            std::vector<size_t> idxs = {0};
+            pickSubVector(vars, ss(), idxs);
 
+            // Bounding
+
+            // x, y and z
             std::vector<mpz_class> cans(alphasCAN);
             cans.insert(cans.end(), alphasPS.begin(), alphasPS.end());
             cans.insert(cans.end(), alphasGCD.begin(), alphasGCD.end());
 
-            auto params = {cans, cans, alphasCAN};
+            // Z and R
+            std::vector<mpz_class> mpz_z, mpz_r;
+            std::array<mpz_t, Degree> exp_z = zp().poly2mpz();
+            std::array<mpz_t, Degree> exp_r = g_r().poly2mpz();
+            
+            std::transform(exp_z.begin(), exp_z.end(), back_inserter(mpz_z), [](mpz_t in)->mpz_class {return mpz_class(in);});
+            std::transform(exp_r.begin(), exp_r.end(), back_inserter(mpz_r), [](mpz_t in)->mpz_class {return mpz_class(in);});
+
+            pickSubVector(vars, mpz_z, indices);
+            pickSubVector(vars, mpz_r, indices);    
+
+            std::vector<mpz_class> zbounds;
+
+            for (auto tau : cans) {
+                zbounds.emplace_back(tau * tau * config().numParties() * mpz_class(2)^mpz_class(config().lambda()));
+            }
+
+            mpz_class rbound = 2*config().lambda()*2*(config().sigma()*config().numParties()*mpz_class(2)^mpz_class(64*9)*Degree);                        
+
+            size_t size = alphasCAN.size() + alphasPS.size() + alphasGCD.size();
+            std::vector<mpz_class> rbounds(size, rbound);
+
+            auto params = {cans, cans, alphasCAN, {mpz_class(2)^mpz_class(1234)}, zbounds, rbounds};
+            
             std::vector<mpz_class> Cs;
 
             e.bitDecompositions.clear();
@@ -1545,65 +1580,145 @@ class EncryptedClient {
             }
 
             // Rounds 11 & 12
+
+            // Data Extraction
+            // ===================================================================================================================
             dataExtractVector(d.by_shares_GCD,  by_shares_GCD);
-            dataExtractSubVector(e.y_sharesGCD, y_shares(), candidateIndices().gcd);
             dataExtractVector(d.ax_shares_GCD,  ax_shares_GCD);
-            dataExtractSubVector(e.x_sharesGCD, x_shares(), candidateIndices().gcd);
-            dataExtractVectorCRT(d.coefsGCD,    moduli_GCD);
-            dataExtractVectorCRT(d.gcds,        alphasGCD);
-            dataExtractVectorCRT(d.prodgcds,    alphasPSprod_GCD);
             dataExtractVector(e.q_p_prod_r11,   q_p_prod_r11);
             dataExtractVector(e.q_pq_r11,       q_pq_r11);
             dataExtractVector(e.q_q_prod_r11,   q_q_prod_r11);
             dataExtractVector(e.q_r_r11,        q_r_r11);
             dataExtractVector(e.r_CRTs,         r_CRTs);
-            dataExtractVector(d.ax_shares_GCD,  ax_shares_GCD);
 
-            dataExtractSubVector(e.z_sharesGCD, z_shares(), candidateIndices().gcd);
-            dataExtractVectorCRT(d.axGCD,       axGCD());
-            dataExtractVectorCRT(d.byGCD,       byGCD());
-            dataExtractVectorCRT(d.axbyGCD,     axbyGCD());
-            dataExtractVector(e.q_r12,          q_r12);
-    	    // Sigma Protocol - this is not quite extraction. We are preparing variables to
-        // perform the sigma protocol. In particular, we need to store the r and x in the
-        // witness of the main ZK proof
-        
-        // e.sigmar = sigmas_r;
-        // d.sigmaa = sigmas_a;
-        // d.sigmae = sigmas_e;
-        // d.sigmaz = sigmas_z;
-        dataExtractVector(e.sigmarGCD,      sigma_r_GCD);
-        dataExtractVector(e.sigmaxGCD,      sigma_x_GCD);
-        dataExtractVector(d.sigmaeGCD,      sigma_e_GCD);
-        dataExtractVector(d.sigmazGCD,      sigma_z_GCD);
-        dataExtractVector(e.exp_q,          exp_q_GCD);
-        dataExtractVector(e.sigmaqGCD,      sigma_q_GCD);
-        //dataExtractVector(e.sigma_blind,    sigma_blind);
- 
-   
-            // debug: test evaluation of x_shares on PS, CAN and GCD
-            // x_prime.ntt_pow_phi();
+            dataExtractVector(e.q_r12,              q_r12);
+            dataExtractVector(d.finalModuli_GCD,    finalModuli_GCD);
+            dataExtractVector(e.ss_GCD,	            ss_GCD);
 
-            // std::cout << e.x_sharesPS[0] << std::endl;
-            // std::cout << copy.poly_obj().data()[candidateIndices().ps[0]] << std::endl;
-            // std::cout << x_prime.poly_obj().data()[candidateIndices().ps[0]] << std::endl;
-            // std::cout << qdivp.poly_obj().data()[candidateIndices().ps[0]] << std::endl;
-            // std::cout << nfl::params<uint64_t>::P[0] << std::endl;
+            dataExtractSubVector<NbPrimesQ>(e.y_sharesGCD,  y_shares(), candidateIndices().gcd);
+            dataExtractSubVector<NbPrimesQ>(e.x_sharesGCD,  x_shares(), candidateIndices().gcd);
+            dataExtractSubVector<NbPrimesQ>(e.z_sharesGCD,  z_shares(), candidateIndices().gcd);
 
-            // for (size_t idx =0; idx < 6; idx++) {
-            //     uint64_t mod = static_cast<__uint64_t>(static_cast<__uint128_t>(e.x_sharesPS[idx*NbPrimesQ])*static_cast<__uint128_t>(qdivp.poly_obj().data()[candidateIndices().ps[idx]]) %
-            //     static_cast<__uint128_t>(nfl::params<uint64_t>::P[0]));
+            dataExtractVectorCRT<NbPrimesQ>(d.coefsGCD,	    moduli_GCD);
+            dataExtractVectorCRT<NbPrimesQ>(d.gcds,         alphasGCD);
+            dataExtractVectorCRT<NbPrimesQ>(d.prodgcds,     alphasPSprod_GCD);
+            dataExtractVectorCRT<NbPrimesQ>(d.axGCD,        axGCD());
+            dataExtractVectorCRT<NbPrimesQ>(d.byGCD,        byGCD());
+            dataExtractVectorCRT<NbPrimesQ>(d.axbyGCD,	    axbyGCD());
 
-            //     std::cout << mod << std::endl;
+            // Computing sigma_x and exp_q
+            // ===================================================================================================================
+            sigma_x_GCD()  = std::vector<mpz_class>(NbPrimesP * alphasGCD.size());
+            exp_q_GCD()    = std::vector<mpz_class>(129 * NbPrimesP * alphasGCD.size());;
 
-            //     assert(mod == x_prime.poly_obj().data()[candidateIndices().ps[idx]]);
-            // }
-            // signal that we did gather all secret data
+            std::vector<mpz_class> expGCD;
+
+            for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
+                mpz_class exponentGCD = math::mod(gammaExponent(), alphasGCD[alphaGCDidx]);
+                mpz_class exponentGCDquotient = (4 * exponentGCD - ((speciald() ? math::mod(finalModuli(), alphasGCD[alphaGCDidx]) + 1 : mpz_class(0)) - expsharesGCD[alphaGCDidx]));
+
+                assert(math::mod(exponentGCDquotient, alphasGCD[alphaGCDidx]) == 0);
+                exponentGCDquotient /= alphasGCD[alphaGCDidx];
+
+                for (size_t i = 0; i < NbPrimesP; i ++) {
+                        mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
+                        sigma_x_GCD()[i * alphasGCD.size() + alphaGCDidx] = positiveRemainder(exponentGCD, prime);
+                        expGCD.push_back(sigma_x_GCD()[i * alphasGCD.size() + alphaGCDidx]);
+                        exp_q_GCD()[i * alphasGCD.size() + alphaGCDidx] = positiveRemainder(exponentGCDquotient, prime);
+                }
+            }
+
+            // Computing sigma_e, sigma_z and sigma_q
+            // ===================================================================================================================
+            std::vector<mpz_class> sigmas_e(128), sigmas_z(128);
+            sigma_a_GCD() = std::vector<mpz_class> (128 * alphasGCD.size() * NbPrimesP);
+            sigma_g_GCD() = std::vector<mpz_class> (128 * alphasGCD.size() * NbPrimesP);
+            sigma_e_GCD() = std::vector<mpz_class> (128 * alphasGCD.size() * NbPrimesP);
+            sigma_z_GCD() = std::vector<mpz_class> (128 * alphasGCD.size() * NbPrimesP);
+            sigma_q_GCD() = std::vector<mpz_class> (128 * alphasGCD.size() * NbPrimesP);
+            
+            std::vector<mpz_class> sigmas_a(128);
+
+            // Generate the Seed for Fiat-Shamir Randomness Generation
+            std::string msg1 = serialize<std::vector<mpz_class>>(sigma_r_GCD());
+            std::string msg2 = serialize<PublicData>(d);
+            std::string msg = msg1 + msg2;
+
+            std::vector<unsigned char> seed = hash::blake2bStringHash(msg.c_str(), msg.size());
+            uint64_t randomness[128*2];
+            randombytes_buf_deterministic((void *)&randomness[0], 128*2*sizeof(uint64_t), &seed[0]);
+            mpz_class higherBitsScalar = mpz_class(2)^mpz_class(64);
+
+            // First completing the sigma ZK protocol and then verifying the main ZK proof
+            for (size_t j = 0 ; j < 128; j++) {
+
+                mpz_class sigma_a = math::powm(gBeforeExp()[j], sigmas_r()[j], finalModuli());
+
+                sigmas_a[j] = sigma_a;
+                sigmas_e[j] = mpz_class(randomness[j*2])+(higherBitsScalar*mpz_class(randomness[j*2+1]));
+
+                sigmas_z[j] = sigmas_r()[j] + sigmas_e[j] * gammaExponent();
+		if(j==0)
+		{
+			LOG(INFO) << "sigma a = " << sigmas_a[0];
+			LOG(INFO) << "sigma e = " << sigmas_e[0];
+			LOG(INFO) << "sigma z = " << sigmas_z[0];
+		}
+                for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
+                    mpz_class sigma_gGCD = math::mod(gAfterExp()[j], alphasGCD[alphaGCDidx]);                    
+                    mpz_class sigma_aGCD = math::mod(sigmas_a[j], alphasGCD[alphaGCDidx]);
+                    mpz_class sigma_xGCD = math::mod(gammaExponent(), alphasGCD[alphaGCDidx]);
+                    mpz_class sigma_rGCD = math::mod(sigmas_r()[j], alphasGCD[alphaGCDidx]);
+                    mpz_class sigma_eGCD = math::mod(sigmas_e[j], alphasGCD[alphaGCDidx]);
+                    mpz_class sigma_zGCD = math::mod(sigmas_z[j], alphasGCD[alphaGCDidx]);
+
+                    mpz_class dividend = sigma_zGCD - (sigma_rGCD + sigma_eGCD * sigma_xGCD);
+
+                    assert(dividend % alphasGCD[alphaGCDidx] == 0);
+                    mpz_class quotient = dividend / alphasGCD[alphaGCDidx];
+
+                    for (size_t i = 0; i < NbPrimesP; i++) {
+                        mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
+                        assert(positiveRemainder(sigma_xGCD,prime) == sigma_x_GCD()[i * alphasGCD.size() + alphaGCDidx]); 
+                        sigma_g_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(sigma_gGCD,prime);
+                        sigma_a_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(sigma_aGCD,prime);
+                        sigma_e_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(sigma_eGCD,prime);
+                        sigma_q_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(quotient,prime);
+                        sigma_z_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(sigma_zGCD,prime);
+
+                        assert( 
+                            math::mod(
+                                sigma_x_GCD()[i * alphasGCD.size() + alphaGCDidx]
+                                    * sigma_e_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size()+ alphaGCDidx]
+                                + sigma_r_GCD()[i * alphasGCD.size() * 128 + j * alphasGCD.size() + alphaGCDidx] 
+                                + math::mod(alphasGCD[alphaGCDidx],prime)
+                                    * sigma_q_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx]
+                                - sigma_z_GCD() [i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx]
+                            , prime) == 0);
+                    }
+
+                }
+            }
+
+            // Extracting Variables for Sigma Protocol
+            // ===================================================================================================================
+            dataExtractVector(e.sigmarGCD,      sigma_r_GCD());
+            dataExtractVector(e.sigmaxGCD,      sigma_x_GCD());
+            dataExtractVector(e.expqGCD,        exp_q_GCD());
+            dataExtractVector(e.sigmaqGCD,      sigma_q_GCD());
+
+            // sigma protocol
+            dataExtractVector(s.sigmazGCD,      sigma_z_GCD());
+            dataExtractVector(s.sigmaeGCD,      sigma_e_GCD());
+            dataExtractVector(s.sigmaaGCD,      sigma_a_GCD());
+            dataExtractVector(s.sigmagGCD,      sigma_g_GCD());
+
             e.isAvailable = true;
 
-            // Checking extraction for Rounds 7 & 8
-            //
+            // Checking Extractions [Mirrored by ZK tests]
+            // ===================================================================================================================
 
+            // Checking extraction for Rounds 7 & 8
             for (size_t p = 0; p < NbPrimesQ; p++) {
                 for (size_t alphaCANidx = 0; alphaCANidx < alphasCAN.size(); alphaCANidx++) {
 
@@ -1629,12 +1744,10 @@ class EncryptedClient {
                                             - mpz_class(e.q_p_prod_r7[i + p]) * mpz_class(d.prodcans[i + p])
                                             )
                                         - mpz_class(e.q_p_r7[i + p]) * mpz_class(d.cans[i + p]);
-                        //std::cout << speciald() << ": rem = " << rem % mpz_class(nfl::params<uint64_t>::P[p]) <<  std::endl;
                         assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
                     }
 
                     //Checking q equation
-
                     {
                         mpz_class rem = mpz_class(d.by_shares[i + p]) + mpz_class(e.y_sharesCAN[i + p]) -
                                         (mpz_class(e.y_sharesPS[p]) * mpz_class(d.coefsCAN[7 * i + p])
@@ -1646,14 +1759,10 @@ class EncryptedClient {
                                          + rem4 * mpz_class(d.coefsCAN[7 * i + 6 * NbPrimesQ + p])
                                          - mpz_class(e.q_q_prod_r7[i + p]) * mpz_class(d.prodcans[i + p]))
                                          - mpz_class(e.q_q_r7[i + p]) * mpz_class(d.cans[i + p]);
-                        //std::cout << speciald() << ": rem = " << rem % mpz_class(nfl::params<uint64_t>::P[p]) <<  std::endl;
                         assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
                     }
 
                     //Round 8
-                    //Checking dividend - quotient * alphasCAN[alphaCANidx] == 0 in
-                    //	 mpz_class dividend = (ax()[pos]*(recomputed_qshare_CAN - qshare_quotient*alphasPSprodCAN)+ by()[pos]*(recomputed_pshare_CAN - pshare_quotient*alphasPSprodCAN)+ z_shares()[j] - axby()[pos]);
-                    //   mpz_class quotient = dividend/alphasCAN[alphaCANidx];
                     {
                         mpz_class rem =
                             mpz_class(d.ax[i + p]) *
@@ -1676,181 +1785,131 @@ class EncryptedClient {
                              - mpz_class(e.q_p_prod_r7[i + p]) * mpz_class(d.prodcans[i + p]))
                             + mpz_class(e.z_sharesCAN[i + p]) - mpz_class(d.axby[i + p])
                             - mpz_class(e.q_r8[i + p]) * mpz_class(d.cans[i + p]);
-                        // std::cout << speciald() << ": rem = " << rem % mpz_class(nfl::params<uint64_t>::P[p]) <<  std::endl;
+                        assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
+                    }
+				}
+			}
+
+            // Round 11 and 12
+            for (size_t p = 0; p < NbPrimesP; p++) {
+                for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
+                    size_t i = alphaGCDidx * NbPrimesQ;
+                    mpz_class rem4 = mpz_class(0);
+
+                    if (speciald()) {
+                                    rem4 = mpz_class(3);
+                    }
+
+                    {
+                        // Constraint for (p + q - 1)/4 = x 
+                        // x : sigma_x_GCD 
+                        // p : recomputed_p_share_GCD
+                        // q : recomputed_q_share_GCD
+                        mpz_class prime                 = mpz_class(nfl::params<uint64_t>::P[p]);
+                        mpz_class finalMod              = math::mod(finalModuli(),alphasGCD[alphaGCDidx]);
+                        mpz_class out                   = positiveRemainder(finalMod,prime);
+                        const mpz_class maybeNplusOne   = d.special ? mpz_class(d.finalModuli_GCD[i+p]) + mpz_class(1) : mpz_class(0);
+
+                        mpz_class rem = 
+                                    (
+                                            // recomputed_p_share_GCD
+                                        (         mpz_class(e.x_sharesPS[0 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
+                                                + mpz_class(e.x_sharesPS[1 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
+                                                + mpz_class(e.x_sharesPS[2 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
+                                                + mpz_class(e.x_sharesPS[3 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
+                                                + mpz_class(e.x_sharesPS[4 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
+                                                + mpz_class(e.x_sharesPS[5 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
+                                                + rem4                                       * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
+                                                - mpz_class(e.q_p_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p]))
+                                            // recomputed_q_share_GCD
+                                        + (       mpz_class(e.y_sharesPS[0 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
+                                                + mpz_class(e.y_sharesPS[1 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
+                                                + mpz_class(e.y_sharesPS[2 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
+                                                + mpz_class(e.y_sharesPS[3 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
+                                                + mpz_class(e.y_sharesPS[4 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
+                                                + mpz_class(e.y_sharesPS[5 * NbPrimesQ + p]) * mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
+                                                + rem4                                       * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
+                                                - mpz_class(e.q_q_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p]))
+                                                - maybeNplusOne
+                                            ) 
+                                        - exp_q_GCD()[p*alphasGCD.size()+alphaGCDidx]  * d.gcds[i+p]
+                                        + mpz_class(4*sigma_x_GCD()[p * alphasGCD.size() + alphaGCDidx]);
+
                         assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
                     }
 
-                    // Round 11 and 12
-                    // 
+                    LOG(INFO) << "Verified sigma" ;
+  
                     {
                         const mpz_class maybeOne = d.special ? mpz_class(1) : mpz_class(0);
                         mpz_class rem = mpz_class(d.by_shares_GCD[i + p]) + mpz_class(e.y_sharesGCD[i + p]) 
                                         - (mpz_class(e.x_sharesPS[0 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
-                                         + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
-                                         - mpz_class(e.q_p_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
-                                         + mpz_class(e.y_sharesPS[0 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
-                                         + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
-                                         - mpz_class(e.q_q_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
-                                         - maybeOne)
+                                        + mpz_class(e.x_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
+                                        + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
+                                        - mpz_class(e.q_p_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
+                                        + mpz_class(e.y_sharesPS[0 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
+                                        + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
+                                        - mpz_class(e.q_q_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
+                                        - maybeOne)
                                         - mpz_class(e.q_pq_r11[i + p]) * mpz_class(d.gcds[i + p]);
-                        //std::cout << speciald() << ": rem = " << rem % mpz_class(nfl::params<uint64_t>::P[p]) <<  std::endl;
                         assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
                     }
+
+                    LOG(INFO) << "Verified round11" ;
+
                     {
-                        mpz_class rem = mpz_class(d.ax_shares_GCD[i + p]) 
+                        mpz_class rem = mpz_class(d.ax_shares_GCD[i + p])
                                         + mpz_class(e.x_sharesGCD[i + p])
                                         - mpz_class(e.r_CRTs[i + p])
                                         - mpz_class(e.q_r_r11[i + p]) * mpz_class(d.gcds[i + p]);
-                        //std::cout << speciald() << ": rem = " << rem % mpz_class(nfl::params<uint64_t>::P[p]) <<  std::endl;
                         assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
                     }
+
                     {
-														const mpz_class maybeOne = d.special ? mpz_class(1) : mpz_class(0);
+                        const mpz_class maybeOne = d.special ? mpz_class(1) : mpz_class(0);
                         mpz_class rem = mpz_class(d.axbyGCD[i + p]) 
-								- mpz_class(d.axGCD[i + p]) * 
-										(
-                                           mpz_class(e.x_sharesPS[0 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
-                                         + mpz_class(e.x_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
-                                         + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
-                                         - mpz_class(e.q_p_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
-                                         + mpz_class(e.y_sharesPS[0 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
-                                         + mpz_class(e.y_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
-                                         + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
-                                         - mpz_class(e.q_q_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
-                                         - maybeOne)
-																				- mpz_class(d.byGCD[i + p]) * mpz_class(e.r_CRTs[i + p])
-																				- mpz_class(e.z_sharesGCD[i + p]) 
-																				+ mpz_class(e.q_r12[i + p]) * mpz_class(d.gcds[i + p]);
+                                - mpz_class(d.axGCD[i + p]) * 
+                                        (
+                                        mpz_class(e.x_sharesPS[0 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
+                                        + mpz_class(e.x_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
+                                        + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
+                                        - mpz_class(e.q_p_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
+                                        + mpz_class(e.y_sharesPS[0 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 0 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[1 * NbPrimesQ + p])   * mpz_class(d.coefsGCD[7 * i + 1 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[2 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 2 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[3 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 3 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[4 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 4 * NbPrimesQ + p])
+                                        + mpz_class(e.y_sharesPS[5 * NbPrimesQ + p])	* mpz_class(d.coefsGCD[7 * i + 5 * NbPrimesQ + p])
+                                        + rem4 					                    * mpz_class(d.coefsGCD[7 * i + 6 * NbPrimesQ + p])
+                                        - mpz_class(e.q_q_prod_r11[i + p]) * mpz_class(d.prodgcds[i + p])
+                                        - maybeOne)
+                                                - mpz_class(d.byGCD[i + p]) * mpz_class(e.r_CRTs[i + p])
+                                                - mpz_class(e.z_sharesGCD[i + p]) 
+                                                - mpz_class(e.ss_GCD[i + p]) * mpz_class(d.finalModuli_GCD[i + p]) 
+                                                + mpz_class(e.q_r12[i + p]) * mpz_class(d.gcds[i + p]);
 
+                                        LOG(INFO) << "i = " << i << "and p = " << p;
                         assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
                     }
 
+        		    LOG(INFO) << "Verified round12" ;
                 }
             }
-            for (size_t p = 0; p < NbPrimesQ; p++) {
-                for (size_t alphaCANidx = 0; alphaCANidx < alphasCAN.size(); alphaCANidx++) {
-
-                    size_t i = alphaCANidx * NbPrimesQ;
-								}
-						}
-/*  
-					// Mock Sigma protocol test
-                
-                std::vector<mpz_class> sigma_e(128), sigma_z(128);
-                std::vector<mpz_class> sigma_e_GCD(alphasGCD.size()*NbPrimesP);
-                std::vector<mpz_class> weight_per_gamma(128);
-                std::vector<mpz_class> sigma_z_GCD(alphasGCD.size());
-                {
-                    // In the U matrix, the prover needs to include e.sigamrGCD and e.sigmaxGCD
-                    // Then, concatenate the root hash of the Merkle tree with e.sigmar and then do Fiat-Shamir for the
-                    // sigma_e and the degree tests.
-                    // Note that sigmarGCD is basically 18 values obtained by computing the exponent used in computing sigmar modulo the 18 elements in alphasGCD
-                    // sigmar is a vector of 128 elements. sigmargcd is vector of 128*18*9, where 9 is the number of zk prime moduli
-                    
-                    
-                    // First completing the sigma ZK protocol and then verifying the main ZK proof
-                    for (size_t j = 0 ; j < 128; j++) {
-                        sigma_e[j] = math::generateRandomValue(mpz_class(std::random_device()()),
-                                                               128); //obtain from Fiat-Shamir
-                        weight_per_gamma[j] = math::generateRandomValue(mpz_class(std::random_device()()),
-                                                                        64); //obtain from Fiat-Shamir
-                        sigma_z[j] = e.sigmar[j] + sigma_e[j] * gammaExponent();
-                        // Verifier's action for the sigma protocol
-                        mpz_class sigma_lhs = math::powm(gBeforeExp()[j], sigma_z[j], finalModuli());
-                        mpz_class sigma_rhs = math::mod(d.sigmaa[j] * math::powm(gAfterExp()[j], sigma_e[j], finalModuli()), finalModuli());
-                        
-                        assert(sigma_lhs == sigma_rhs);
-                        
-                        for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
-                            sigma_z_GCD[alphaGCDidx] += math::mod(weight_per_gamma[j] * sigma_z[j], alphasGCD[alphaGCDidx]);
-                            
-                            for (size_t i = 0; i < NbPrimesP; i ++) {
-                                mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
-                                size_t pos = i * 128 * alphasGCD.size() + j * alphasGCD.size() + alphaGCDidx;
-                                mpz_class sigmaeGCD = math::mod(sigma_e[j], alphasGCD[alphaGCDidx]);
-                                mpz_class weight = math::mod(weight_per_gamma[j], alphasGCD[alphaGCDidx]);
-                                sigma_e_GCD[i * alphasGCD.size() + alphaGCDidx] += positiveRemainder(sigmaeGCD,
-                                                                                                     prime) * positiveRemainder(weight, prime);
-                                //sigma_z_GCD[pos] = positiveRemainder(sigmazGCD,  prime);
-                                //mpz_class sigmarGCD = math::mod(e.sigmar[j],alphasGCD[alphaGCDidx]);
-                                //mpz_class sigmaxGCD = math::mod(gammaExponent(),alphasGCD[alphaGCDidx]);
-                                //mpz_class temp = sigma_r_GCD[pos]+sigma_e_GCD[pos]*sigma_x_GCD[i*alphasGCD.size() + alphaGCDidx];
-                                }
-                        }
-                    }
-                    
-                    std::vector<mpz_class> lintest(129 * alphasGCD.size()*NbPrimesP);
-                    
-                    for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
-                        for (size_t i = 0; i < NbPrimesP; i ++) {
-                            sigma_e_GCD[i * alphasGCD.size() + alphaGCDidx] = math::mod(sigma_e_GCD[i * alphasGCD.size() +
-                                                                                                    alphaGCDidx], mpz_class(nfl::params<uint64_t>::P[i]));
-                            lintest[i * alphasGCD.size() * 129 + alphaGCDidx] = sigma_blind[i * alphasGCD.size() * 129 +
-                                                                                            alphaGCDidx]
-                                                                                + sigma_x_GCD[i * alphasGCD.size() + alphaGCDidx]
-                                                                                * sigma_e_GCD[i * alphasGCD.size() + alphaGCDidx];
-                                                                                
-                        }
-                    }
-                    
-                    for (size_t j = 0; j < 128; j++) {
-                        for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
-                            for (size_t i = 0; i < NbPrimesP; i ++) {
-                                mpz_class weight = math::mod(weight_per_gamma[j], alphasGCD[alphaGCDidx]);
-                                lintest[i * alphasGCD.size() * 129 + (j + 1)*alphasGCD.size() + alphaGCDidx]
-                                    = sigma_blind[i * alphasGCD.size() * 129 + (j + 1) * alphasGCD.size() + alphaGCDidx]
-                                      + weight * sigma_r_GCD[i * alphasGCD.size() * 128 + j * alphasGCD.size() + alphaGCDidx];
-                            }
-                        }
-                    }
-                    
-                    // Checking the mock linear test
-                    //
-                    std::vector<mpz_class> crt_primes(NbPrimesP);
-                    
-                    for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
-                        std::vector<mpz_class> crt_vec(NbPrimesP);
-                        
-                        for (size_t i = 0; i < NbPrimesP; i ++) {
-                            crt_primes[i] = mpz_class(nfl::params<uint64_t>::P[i]);
-                            
-                            for (size_t j = 0; j < 129; j++) {
-                                crt_vec[i] += lintest[i * alphasGCD.size() * 129 + j * alphasGCD.size() + alphaGCDidx];
-                            }
-                        }
-                        
-                        for (size_t i = 0; i < NbPrimesP; i ++) {
-                            crt_vec[i] = math::mod(crt_vec[i], crt_primes[i]);
-                        }
-                        
-                        std::vector<mpz_class> coeffs_temp;
-                        mpz_class crt_result = math::crt_reconstruct(crt_vec, coeffs_temp, crt_primes);
-                        //std::cout<< speciald() << ": CRT result = " << math::mod(crt_result, alphasGCD[alphaGCDidx])<< std::endl;
-                        //std::cout<< speciald() << ": Z mod alpha[" << alphaGCDidx << "] = " << math::mod(sigma_z_GCD[alphaGCDidx], alphasGCD[alphaGCDidx])<< std::endl;
-                        assert(math::mod(crt_result, alphasGCD[alphaGCDidx]) == math::mod(sigma_z_GCD[alphaGCDidx],
-                                                                                          alphasGCD[alphaGCDidx]));
-                                                                                          
-                    }
-                }
-				*/
+            
+	        LOG(INFO) << "finished gathering" ;
         }
 
         /* ========== variables used for zero knowledge ========== */
@@ -1858,6 +1917,8 @@ class EncryptedClient {
         // variables from `generateKeyPair`
         Q _siP, _eiP, _si, _ei, _bi, _A, _ai, _b;
         mpz_class _jacobiSeedShares, _jacobiAndGCDSeedShares;
+
+        std::vector<mpz_class> _ss;
 
         bool _special;
         // variables from `generatePreSievingShares`
@@ -1873,6 +1934,16 @@ class EncryptedClient {
         std::vector<mpz_class> _moduli;
         std::vector<std::vector<mpz_class>> _coefs;
         std::vector<size_t> _index_candidates;
+        std::vector<mpz_class> _sigma_r_GCD;
+        std::vector<mpz_class> _sigma_x_GCD;
+        std::vector<mpz_class> _sigma_a_GCD;
+        std::vector<mpz_class> _sigma_g_GCD;
+        std::vector<mpz_class> _sigma_e_GCD;
+        std::vector<mpz_class> _sigma_z_GCD;
+        std::vector<mpz_class> _sigma_q_GCD;
+        std::vector<mpz_class> _exp_q_GCD;
+        std::vector<mpz_class> _sigmas_r;
+
         uint32_t _finalindex;
 
         mpz_class _finalModuli,_gammaExponent;
@@ -1884,8 +1955,7 @@ class EncryptedClient {
         std::vector<mpz_class> _x_shares;
         std::vector<mpz_class> _y_shares;
         std::vector<mpz_class> _z_shares;
-        lattice::cipher<T, Degree, NbPrimesQ>  _xsum_first, _xsum_final, _enc_z_shares,
-                _xyz_sum, _enc_x_shares;
+        lattice::cipher<T, Degree, NbPrimesQ>  _xsum_first, _xsum_final, _enc_z_shares, _xyz_sum, _enc_x_shares;
 
         std::vector<mpz_class> _p_sharesCRTs;
         std::vector<mpz_class> _q_sharesCRTs;
@@ -1900,6 +1970,10 @@ class EncryptedClient {
         std::vector<mpz_class> _axGCD;
         std::vector<mpz_class> _byGCD;
         std::vector<mpz_class> _axbyGCD;
+        std::vector<mpz_class> _ssGCD;
+
+        mpz_class               _gcdRX;
+        mpz_class               _gammaSeed;
 
         // sigma
         
@@ -1907,22 +1981,88 @@ class EncryptedClient {
         std::vector<mpz_class> _gAfterExp;
 
         // legacy
-        std::vector<mpz_class> _a_shares, _b_shares;
-        cipherText _as, _es;
+        std::vector<mpz_class>  _a_shares, _b_shares;
+        cipherText              _as, _es;
         std::vector<cipherText> _as_vec, _es_vec;
-        Q _partial_e_shares;
-        std::vector<int> _sievingFlags;
+        Q                       _partial_e_shares;
+        std::vector<int>        _sievingFlags;
 
         // others
-        SocketId& _socketId;
+        SocketId&               _socketId;
+        ProtocolConfig<T>       _config;
+
+        // passive protocol
+        std::unique_ptr<nfl::FastGaussianNoise<uint16_t, T, 2>> _fg;
+        std::unique_ptr<nfl::gaussian<uint16_t, T, 2>> _chi;
+        std::unique_ptr<lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>> _e;
 };
 
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
-ProtocolConfig<T> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::registerAndAwaitConfiguration(
-    ZeroMQClientTransport &transport, std::string ipAddress) {
-    DBG("Participant (" << transport.getSocketId() << "," << ipAddress <<
-        ") registering with coordinator.");
+expected<ProtocolConfig<T>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::registerAndAwaitConfiguration(
+    ZeroMQClientTransport &transport, std::string ipAddress, nfl::gaussian<uint16_t, T, 2>& chi, zksnark::Prover<FieldT>* prover) {
 
+    DBG("Participant (" << transport.getSocketId() << "," << ipAddress << ") registering with coordinator.");
+
+    // gaussian dist
+    siP() = Q(chi);
+    eiP() = Q(chi);
+
+    auto positiveRemainder = [&](mpz_class & a, mpz_class & b) -> mpz_class {
+        return ((a % b + b) % b);
+    };
+
+    auto [alphasGCD, _drop_val] = math::fixed_bucket_n_primes(3210, primesGCD,175);
+    std::vector<mpz_class> alphasPSprod_GCD, moduli_GCD;
+    std::vector<mpz_class> ax_shares_GCD;
+    std::vector<mpz_class> by_shares_GCD;
+    std::vector<mpz_class> expsharesGCD;
+
+    // Sigma Protocol
+    // Step 1: Commit to r and x before executing the sigma protocol
+    
+    sigmas_r()     = std::vector<mpz_class>(128);
+    sigma_r_GCD()  = std::vector<mpz_class>(129 * NbPrimesP * alphasGCD.size());
+
+    // assuming that second jacobi test only has one moduli and security parameter is 128.
+    for (size_t j = 0; j < 128; j++) {
+
+        mpz_class sigma_r = math::generateRandomValue(mpz_class(std::random_device()()), 2048 + 128);
+        sigmas_r()[j] = sigma_r;
+
+        for (size_t alphaGCDidx = 0; alphaGCDidx < alphasGCD.size(); alphaGCDidx++) {
+            mpz_class sigma_rGCD = math::mod(sigma_r, alphasGCD[alphaGCDidx]);
+            
+            for (size_t i = 0; i < NbPrimesP; i ++) {
+                mpz_class prime = mpz_class(nfl::params<uint64_t>::P[i]);
+                sigma_r_GCD()[i * alphasGCD.size() * 128 + j * alphasGCD.size() + alphaGCDidx] = positiveRemainder(sigma_rGCD, prime);
+            }
+        }
+    }
+
+    // Primitive Roots of Unity for All Moduli
+    nfl::poly_p<uint64_t, 65536, 21> roots({0});
+    for (size_t idx = 0; idx < 21; idx++) {roots(idx,1) = 1ull;}
+    roots.ntt_pow_phi();
+    std::vector<std::string> earlyWitnessHash;
+    
+    for (size_t modulusIdx = 0; modulusIdx<9; modulusIdx++) {
+        // Roots of Unity
+        prover->_publicData.modulusIdx = modulusIdx;
+        prover->_publicData.roots.assign(roots.poly_obj().data()+prover->_publicData.modulusIdx*(size_t)roots.degree,roots.poly_obj().data()+(prover->_publicData.modulusIdx+1)*(size_t)roots.degree);
+
+        // Zero-Knowledge
+        p_zk = nfl::params<uint64_t>::P[prover->_publicData.modulusIdx];
+        FieldT::modulusIdx_ = prover->_publicData.modulusIdx;
+
+        dataExtractQ(prover->_secretData.eiP, eiP());
+        dataExtractQ(prover->_secretData.siP, siP());
+        dataExtractVector(prover->_secretData.sigmarGCD, sigma_r_GCD());
+
+        prover->produceArgumentOfKnowledge(1, true);
+
+        hash::digest& d = prover->_transcript[0].proverCommitment_early;
+        earlyWitnessHash.emplace_back(d.begin(), d.end());
+    }
 
     // Generate all values we need to commit to coordinator
     // first uniformly choose a
@@ -1936,16 +2076,16 @@ ProtocolConfig<T> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::regi
     transport.send(MessageType::ID_PARTY, 
             PartyCommitment(
                 ipAddress,
+                earlyWitnessHash,
                 math::computeHash(ai()),
                 math::computeHash(jacobiSeedShares()),
                 math::computeHash(jacobiAndGCDSeedShares())
                 ));
 
     auto success = transport.awaitReply<ProtocolConfig<T>> (MessageType::PROTOCOL_CONFIG);
-    if (!success) {
-        throw std::runtime_error("Kill/Restart message received during registration!");
-    }
-    return *success;
+    if (hasError(success)) { return getError(success); }
+
+    return getResult(success);
 }
 
 /*
@@ -1953,7 +2093,7 @@ ProtocolConfig<T> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::regi
  * return a public key (a, b) and a private key si
  */
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
-std::optional<lattice::key_pair<T, Degree, NbPrimesQ>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::generateKeyPair(ZeroMQClientTransport& trans, nfl::gaussian<uint16_t, T, 2>& chi) {
+expected<lattice::key_pair<T, Degree, NbPrimesQ>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::generateKeyPair(ZeroMQClientTransport& trans, nfl::gaussian<uint16_t, T, 2>& chi) {
 
     DBG("Generating Keys");
     using Q = nfl::poly_p<T, Degree, NbPrimesQ>;
@@ -1963,18 +2103,13 @@ std::optional<lattice::key_pair<T, Degree, NbPrimesQ>> EncryptedClient<FieldT, T
     DBG("Sending A shares");
     trans.send<Q>(MessageType::PUBLIC_KEY_A_SHARES, ai());
     auto maybe_a = trans.awaitReply<Q>(MessageType::PUBLIC_KEY_A_VALUE);
-    if (!maybe_a) {
+    if (hasError(maybe_a)) {
         LOG(ERROR) << "Kill/Restart received during keygen A";
-        return std::nullopt;
+        return getError(maybe_a);
     }
-    A() = *maybe_a;
+    A() = getResult(maybe_a);
     DBG("Received A");
 
-    // gaussian dist
-    siP() = Q(chi);
-    eiP() = Q(chi);
-
-    // keep everything in FFT domain
     si() = siP();
     ei() = eiP();
 
@@ -1986,15 +2121,15 @@ std::optional<lattice::key_pair<T, Degree, NbPrimesQ>> EncryptedClient<FieldT, T
     DBG("Sending B shares");
     trans.send<Q>(MessageType::PUBLIC_KEY_B_SHARES, bi());
     auto maybe_b = trans.awaitReply<Q>(MessageType::PUBLIC_KEY_B_VALUE);
-    if (!maybe_b) {
+    if (hasError(maybe_b)) {
         LOG(ERROR) << "Kill/Restart received during keygen B";
-        return std::nullopt;
+        return getError(maybe_b);
     }
     DBG("Received B");
-    b() = *maybe_b;
+    b() = getResult(maybe_b);
 
     // return (public key, private key)
-    return {{{A(), b()}, si()}};
+    return std::make_pair(std::make_pair(A(), b()), si());
 }
 
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
@@ -2036,38 +2171,7 @@ std::vector<size_t> bucketSize) {
 
 
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
-CandidateIndices
-EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::getCandidateIndices(
-    size_t idx) {
-
-    std::vector<size_t> ps;
-    size_t i;
-    for (i = 0; i < primesPS; ++i) {
-        if (index_candidates()[i] == idx) {
-            ps.push_back(i);
-        }
-    }
-
-    std::vector<size_t> can;
-    for (; i < primesPS + primesCAN; ++i) {
-        if (index_candidates()[i] == idx) {
-            can.push_back(i);
-        }
-    }
-
-    std::vector<size_t> gcd;
-    for (; i < primesPS + primesCAN + primesGCD; ++i) {
-        if (index_candidates()[i] ==
-                -2) { // -2 is a special value used only for GCD. Only one candidate uses it
-            gcd.push_back(i);
-        }
-    }
-
-    return CandidateIndices({ps, can, gcd});
-}
-
-template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
-std::optional<std::tuple<
+expected<std::tuple<
 std::vector<mpz_class>, // xcan
     std::vector<mpz_class>, // ycan
     std::vector<mpz_class>, // zcan
@@ -2084,15 +2188,17 @@ std::vector<mpz_class>, // xcan
         bool special,
         ProtocolConfig<T> &config
 ) {
+
+    assert(primesPS + primesCAN + primesGCD <= Degree);
+
     using P = nfl::poly_p<T, Degree, NbPrimesP>;
     using Q = nfl::poly_p<T, Degree, NbPrimesQ>;
-
 
     // For the pre-sieving part of our candidate generation, we need prime
     // buckets s.t. the product of buckets has a bit-length greater than 1024.
     auto [alphasPS, bucketSizePS] = math::balanced_bucket_n_primes(config.pbs(), primesPS, config.tauLimitBit(), 1);
     auto [alphasCAN, bucketSizeCAN] = math::fixed_bucket_n_primes(config.pbs()+48, primesCAN, config.tauLimitBit());
-    auto [alphasGCD, bucketSizeGCD] = math::fixed_bucket_n_primes(3*config.pbs()+96, primesGCD, config.tauLimitBit());
+    auto [alphasGCD, bucketSizeGCD] = math::fixed_bucket_n_primes(3*config.pbs()+210, primesGCD, config.tauLimitBit());
 
     // set equal buckets for bucketSizeCan and bucketSizeGCD
     const int bucketSizeCAN_value = lrint(floor(double(primesCAN) / double(
@@ -2107,59 +2213,53 @@ std::vector<mpz_class>, // xcan
     }
 
 
-    // set bucketSizeGCD same size = lrint(floor(double(primesCAN)/alphasCAN.size()));
 
     auto [alphasdummy, bucketSizedummy] = math::balanced_bucket_n_primes(
             config.pbs(), Degree - primesTOTAL, config.tauLimitBit(), 1);
 
-    // Now each party picks `degree` shares of random numbers `a` from
-    // the set {0, ..., alpha_t - 1} for each alpha_t.
 
     a_shares().resize(primesPS);
     b_shares().resize(primesPS);
 
-    x_shares() = math::generateRandomVector(std::random_device()(), Degree,
+    LOG(INFO) << "Check protocol mode";
+    if (config.protocolMode() == ProtocolMode::NORMAL
+        || config.protocolMode() == ProtocolMode::RECORD) {
+        x_shares() = math::generateRandomVector(std::random_device()(), Degree,
+                config.tauLimitBit());
+        y_shares() = math::generateRandomVector(std::random_device()(), Degree,
+                config.tauLimitBit());
+        z_shares() = math::generateRandomVector(std::random_device()(), Degree,
                                             config.tauLimitBit());
-    y_shares() = math::generateRandomVector(std::random_device()(), Degree,
-                                            config.tauLimitBit());
-    z_shares() = math::generateRandomVector(std::random_device()(), Degree,
-                                            config.tauLimitBit());
+
+        if (config.protocolMode() == ProtocolMode::RECORD) {
+
+            LOG(INFO) << "Protocol mode record";
+            transport.send(MessageType::RECORD_PROTOCOL_SHARES, std::make_pair(x_shares(), std::make_pair(y_shares(), z_shares())));
+            LOG(INFO) << "Sent mode record";
+
+            auto maybe_rep = transport.awaitReply<int>(MessageType::RECORD_PROTOCOL_RESPONSE);
+            LOG(INFO) << "Continued after record";
+
+        }
+    } else if (config.protocolMode() == ProtocolMode::REPLAY) {
+        LOG(INFO) << "Protocol replay";
+
+        transport.send(MessageType::REPLAY_PROTOCOL_SHARES, int(1));
+
+        LOG(INFO) << "Sent out that we are ready for replay";
+        auto maybe_replay = transport.awaitReply<TripleVector>(MessageType::REPLAY_PROTOCOL_RESPONSE);
+        if (hasError(maybe_replay)) {
+            LOG(ERROR) << "Kill/Restart received during replay";
+            return getError(maybe_replay);
+        }
+        auto [_xs, _yszs] = getResult(maybe_replay);
+        x_shares() = _xs;
+        std::tie(y_shares(), z_shares()) = _yszs;
+    } else {
+        throw std::runtime_error("Unknown Protocol execution mode.");
+    }
 
     index_candidates() = std::vector<size_t>(Degree);
-
-    // i from 0 to degree - 1
-    // get(i) -> candidate_number from 0 to 3600
-    // i from 0 to primesPS - 1 -> pre-sieving
-    // i from primesPS to primesPS +primesCAN - 1 -> candidate generation
-    // i from primesPS + primesCAN  to degree - 1 -> GCD
-    // x = [ 1 1 1 2 2 2.. .... -1 -1 -1 ... ... ]
-    // y = [ 1 1 1 2 2 2.. .... ... ... ]
-    // z = [ 1 1 1 2 2 2.. .... ... ... ]
-    // only one array needed because they are the same
-    // -1 not leaded to any candidate
-    //
-    // if I take candidate i = 1, then it will point exactly 6 positions in [0, primesPS - 1],
-    // and exactly to 6 positions in [primesPS, primesPS + primesCAN]
-    //
-    // given a candidate give me a map of these 6 indeces from first and 6 from second so it is 12 indices
-    //
-    //                                               pre-sieving         candidateGen        GCD
-    // giveCandidateIndeces(MPInt: candidate) -> indices({{1, 2, 3, 4, 5, 6}, {1, 2, 3, 4, 5, 6}, {1, 2, 3, 4, 5,6, 7, ..., 18 }})
-    //
-    //
-    //
-    // Structure indices
-    // {
-    //    std::vector preSieving;
-    //    std::vector candidateGeneration;
-    //    std::vector* GCD; // NULL
-    // }
-    //
-    //
-    // Create an array [ 1 2 3 4 ...]
-    // When you prune discard prune this array the same way
-    //
-
     std::vector<mpz_class> xcan(primesCAN);
     std::vector<mpz_class> ycan(primesCAN);
     std::vector<mpz_class> zcan(primesCAN);
@@ -2235,7 +2335,7 @@ std::vector<mpz_class>, // xcan
         }
     }
 
-    // Store x, y, z, for ZK
+
 
     // Pi sends Enc(xi) to coordinator. Coordinator aggregates all encryptions and returns Enc(\sum x_i) = Enc(x)
     DBG("Participant (" << transport.getSocketId() << ") sending `Enc(xi)` shares");
@@ -2251,11 +2351,11 @@ std::vector<mpz_class>, // xcan
 
     auto maybe_xsum = transport.awaitReply<lattice::cipher<T, Degree, NbPrimesQ>>
                       (MessageType::ENCRYPTED_X_VALUE);
-    if (!maybe_xsum) {
+    if (hasError(maybe_xsum)) {
         LOG(ERROR) << "Kill/Restart received during presieve";
-        return std::nullopt;
+        return getError(maybe_xsum);
     }
-    auto xsum = *maybe_xsum;
+    auto xsum = getResult(maybe_xsum);
     xsum_first() = xsum;
     DBG("Participant (" << transport.getSocketId() << ") received `Enc(a)`");
 
@@ -2264,10 +2364,6 @@ std::vector<mpz_class>, // xcan
     uz() = uzi;
     vz() = vzi;
     wz() = wzi;
-
-    // std::cout << "sanity check:" << enc_z_shares().first.poly_obj().data()[0] - (uz().poly_obj().data()[0]*publicKey.first.poly_obj().data()[0] + wz().poly_obj().data()[0]) << std::endl;
-    // std::cout << "sanity check:" << A().poly_obj().data()[0] << std::endl;
-    // std::cout << "sanity check:" << publicKey.first.poly_obj().data()[0] << std::endl;
 
     {
         auto *ptr = new std::array<mpz_class, Degree> {};
@@ -2293,11 +2389,11 @@ std::vector<mpz_class>, // xcan
     auto maybe_xyz_sum =
         transport.awaitReply<lattice::cipher<T, Degree, NbPrimesQ>>
         (MessageType::ENCRYPTED_XY_PLUS_Z_VALUE);
-    if (!maybe_xyz_sum) {
+    if (hasError(maybe_xyz_sum)) {
         LOG(ERROR) << "Kill/Restart received (xyz_sum)";
-        return std::nullopt;
+        return getError(maybe_xyz_sum);
     }
-    xyz_sum() = *maybe_xyz_sum;
+    xyz_sum() = getResult(maybe_xyz_sum);
     DBG("Participant (" << transport.getSocketId() <<
         ") received `Enc(x)*y - Enc(z)`");
 
@@ -2316,43 +2412,16 @@ std::vector<mpz_class>, // xcan
         ") sending `Dec_si(xyz)` shares");
 
 
-    /*
-    // Next for debugging purposes sending the shares in the clear
-    P p_b_shares,p_a_shares;
-    {
-            auto *ptr = new std::array<mpz_class, Degree>{};
-            std::transform(b_shares().begin(), b_shares().end(), ptr->begin(), [](const auto& x) { return x; });
-            p_b_shares.set_mpz(*ptr);
-            delete(ptr);
-    }
-
-    {
-            auto *ptr = new std::array<mpz_class, Degree>{};
-            std::transform(a_shares().begin(), a_shares().end(), ptr->begin(), [](const auto& x) { return x; });
-            p_a_shares.set_mpz(*ptr);
-            delete(ptr);
-    }
-
-    transport.send(MessageType::P_CLEAR_DEBUG, p_a_shares);
-    DBG("Participant (" << transport.getSocketId() << ") sending `a` shares in the clear");
-
-    uint64_t flag = transport.awaitReply<uint64_t>(MessageType::MUTHU_ACK);
-    DBG("Participant (" << transport.getSocketId() << ") received 0 as an ACK");
-    transport.send(MessageType::Q_CLEAR_DEBUG, p_b_shares);
-    DBG("Participant (" << transport.getSocketId() << ") sending `b` shares in the clear");
-
-    */
-
     // Now the coordinator can evaluate which of the `a_shares` we sent are valid. Many of them
     // will be eliminated, and the coordinator will communicate which values to eliminate via
     // a binary matrix, which we then use to shuffle our shares around before the CRT reconstruction step.
     auto maybe_sievingFlags = transport.awaitReply<std::vector<int>>
                               (MessageType::PS_SIEVING_FLAGS);
-    if (!maybe_sievingFlags) {
+    if (hasError(maybe_sievingFlags)) {
         LOG(ERROR) << "Kill/Received (sievingFlags)";
-        return std::nullopt;
+        return getError(maybe_sievingFlags);
     }
-    sievingFlags() = *maybe_sievingFlags;
+    sievingFlags() = getResult(maybe_sievingFlags);
     std::vector<std::vector<mpz_class>> valid_shares = pruneAndReorderShares(
                                          a_shares(), b_shares(), sievingFlags(), alphasPS.size(), bucketSizePS);
 
@@ -2399,7 +2468,7 @@ std::vector<mpz_class>, // xcan
 }
 
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
-std::optional<std::tuple<std::vector<mpz_class>, std::vector<mpz_class>, std::vector<mpz_class>>>
+expected<std::tuple<std::vector<mpz_class>, std::vector<mpz_class>, std::vector<mpz_class>>>
 EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGeneration(
     ZeroMQClientTransport &transport,
     const std::vector<mpz_class> xcan,
@@ -2475,18 +2544,17 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGenerati
     auto ax_by =
         transport.awaitReply<std::pair<std::vector<mpz_class>, std::vector<mpz_class>>>
         (MessageType::AX_BY_VALUE);
-    if (!ax_by) {
+    if (hasError(ax_by)) {
         LOG(ERROR) << "Kill/Restart received (modulus generation, ax_by";
-        return std::nullopt;
+        return getError(ax_by);
     }
-    auto [tax, tby] = *ax_by;
+    auto [tax, tby] = getResult(ax_by);
     ax() = tax;
     by() = tby;
     DBG("Participant (" << transport.getSocketId() <<
         ") received `ax and by` values");
 
     // candidate generation
-    //std::vector<mpz_class> axby(ax().size());
     axby().resize(ax().size());
     {
         int k = 0;
@@ -2494,9 +2562,6 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGenerati
             for (size_t j = 0; j < alphasCAN.size(); ++j) {
                 axby()[k] = math::mod((ax()[k] * q_sharesCRTs()[k] + by()[k] * p_sharesCRTs()[k]
                                        + zcan[k]), alphasCAN[j]);
-                /*if (special) {*/
-                //axby[k] = math::mod(axby[k] - ax[k]*by[k], alphasCAN[j]);
-                /*}*/
                 ++k;
             }
         }
@@ -2508,11 +2573,11 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGenerati
 
     auto maybe_candidates = transport.awaitReply<std::vector<mpz_class>>
                             (MessageType::MODULUS_CANDIDATE);
-    if (!maybe_candidates) {
+    if (hasError(maybe_candidates)) {
         LOG(ERROR) << "Kill/Restart received (modulus generation, candidates";
-        return std::nullopt;
+        return getError(maybe_candidates);
     }
-    auto candidates = *maybe_candidates;
+    auto candidates = getResult(maybe_candidates);
     DBG("Participant (" << transport.getSocketId() << ") received `N` candidates");
     // In return the coordinator will send us a plaintext vector of modulus candidates.
 
@@ -2522,19 +2587,7 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGenerati
 
     std::vector<int> syncF;
     syncF.push_back(1);
-    transport.send(MessageType::MUTHU_ACK, int(1));
-
-    /*
-    transport.send(MessageType::MUTHU_ACK, xcan);
-    auto syncF = transport.awaitReply<int>(MessageType::MUTHU_ACK);
-    transport.send(MessageType::MUTHU_ACK, ycan);
-    syncF = transport.awaitReply<int>(MessageType::MUTHU_ACK);
-    transport.send(MessageType::MUTHU_ACK, zcan);
-    syncF = transport.awaitReply<int>(MessageType::MUTHU_ACK);
-    */
-    //transport.send(MessageType::MUTHU_ACK, std::pair{p_shares, q_shares});
-    //auto syncF = transport.awaitReply<int>(MessageType::MUTHU_ACK);
-
+    transport.send(MessageType::SYNCHRONIZE_NOW, int(1));
 
     candidatesCAN() = candidates;
     return std::make_tuple(candidates, p_shares, q_shares);
@@ -2543,7 +2596,7 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGenerati
 
 /** Runs the client protocol for performing the first of the biprimality tests. */
 template<typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
-std::optional<int>
+expected<int>
 EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performJacobiTest(
     ZeroMQClientTransport &transport,
     const std::vector<mpz_class> &candidates,
@@ -2558,16 +2611,16 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performJacobiTest(
 
     auto maybe_gammaSeed = transport.awaitReply<mpz_class>
                            (MessageType::GAMMA_RANDOM_SEED_VALUE);
-    if (!maybe_gammaSeed) {
+    if (hasError(maybe_gammaSeed)) {
         LOG(ERROR) << "Kill/Restart received (performJacobiTest, gammaSeed";
-        return std::nullopt;
+        return getError(maybe_gammaSeed);
     }
-    auto gammaSeed = MPInt(maybe_gammaSeed->get_mpz_t());
+    auto gammaSeed = MPInt(getResult(maybe_gammaSeed).get_mpz_t());
     // We find a set of valid gamma values by their jacobi symbol...
     std::vector<mpz_class> gammaValues(candidates.size());
 
     DBG("gammaSeed = " << gammaSeed);
-    std::vector<mpz_class> engine = math::generateRandomVector(*maybe_gammaSeed,
+    std::vector<mpz_class> engine = math::generateRandomVector(getResult(maybe_gammaSeed),
                                     kJacobiNumberOfRandomValues, 2048);
     size_t engineCount = 0;
 
@@ -2608,6 +2661,8 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performJacobiTest(
             // Sanity check, assert if gcd(gammaValues[i], N) == 1
             mpz_gcd(gcdResult, gammaValues[i].get_mpz_t(), N.get_mpz_t());
             assert(mpz_cmp(gcdResult, one) == 0);
+
+            // Export 
         }
 
         mpz_clear(one);
@@ -2657,7 +2712,7 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performJacobiTest(
 
 /** Runs the client protocol for performing the second of the biprimality tests. */
 template<typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
-std::optional<int>
+expected<int>
 EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTest(
     ZeroMQClientTransport &transport,
     const std::vector<mpz_class> &candidates,
@@ -2678,7 +2733,7 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTes
     // use CRT to deconstruct this value, encrypt deconstructed representation
     // and send them to the coordinator
     DBG("Initialize alphasGCD");
-    auto [alphasGCD, _drop_val] = math::fixed_bucket_n_primes(3*config.pbs() + 96, primesGCD, config.tauLimitBit());
+    auto [alphasGCD, _drop_val] = math::fixed_bucket_n_primes(3*config.pbs() + 210, primesGCD, config.tauLimitBit());
     const int bucketSize = lrint(floor(double(primesGCD) / double(alphasGCD.size())));
 
     DBG("bucketSize = " << bucketSize);
@@ -2711,9 +2766,9 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTes
 
             // a = random number
             DBG("a = random ");
-            mpz_class rx = grc.get_z_bits(2 * config.pbs() + 48);
+            gcdRX() = grc.get_z_bits(2 * config.pbs() + 48); 
             DBG("doing CRT deconstruct ");
-            auto aCRT = math::crt_deconstruct(rx, alphasGCD);
+            auto aCRT = math::crt_deconstruct(gcdRX(), alphasGCD);
             assert(aCRT.size() == alphasGCD.size());
 
             DBG("b = p_i ");
@@ -2761,11 +2816,13 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTes
         transport.awaitReply<std::pair<std::pair<std::vector<mpz_class>,
         std::vector<mpz_class>>,
         mpz_class>>(MessageType::AX_BY_VALUE);
-    if (!maybe_axby) {
+    if (hasError(maybe_axby)) {
         LOG(ERROR) << "Kill/Restarted received (GCDandJacobiTest, axby)";
-        return std::nullopt;
+        return getError(maybe_axby);
     }
-    auto [axby_pair, gammaSeed] = *maybe_axby;
+    auto [axby_pair, gammaSeed] = getResult(maybe_axby);
+    
+    gammaSeed_g() = gammaSeed;
     auto [ax_GCD, by_GCD] = axby_pair;
     axGCD() = ax_GCD;
     byGCD() = by_GCD;
@@ -2832,15 +2889,12 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTes
     gBeforeExp() = gammaValues;
     gAfterExp().resize(gammaValues.size());
 
-
     for (int i = 0; i < candidates.size(); ++i) {
         for (int j = 0; j < config.lambda(); j++) {
             const mpz_class &N = candidates[i];
             mpz_class &g = gammaValues[i * config.lambda() + j];
 
-
-            mpz_class exp = (special ? mpz_class(N + 1) : mpz_class(
-                                 0)) - p_shares[i] - q_shares[i];
+            mpz_class exp = (special ? mpz_class(N + 1) : mpz_class(0)) - p_shares[i] - q_shares[i];
 
             if (special) {
                 if (p_shares[i] % 4 != 3 || q_shares[i] % 4 != 3) {
@@ -2868,28 +2922,6 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTes
 
             gAfterExp()[i * config.lambda() + j] = mpz_class(g);
 
-            mpz_class sigma_r = math::generateRandomValue(mpz_class(std::random_device()()), 2 * config.pbs() + 48 + config.lambda());
-            mpz_class sigma_a = math::powm(orig_g, sigma_r, N);
-
-            mpz_class sigma_e = math::generateRandomValue(mpz_class(std::random_device()()), config.pbs() + 24 + config.lambda());
-            mpz_class sigma_z = sigma_r + sigma_e * exp;
-
-            mpz_class sigma_lhs = math::powm(orig_g, sigma_z, N);
-            mpz_class sigma_rhs = math::mod(sigma_a * math::powm(g, sigma_e, N), N);
-
-            if (sigma_lhs != sigma_rhs) {
-                DBG("g = " << g);
-                DBG("orig_g = " << orig_g);
-                DBG("sigma_r = " << sigma_r);
-                DBG("sigma_a = " << sigma_a);
-                DBG("sigma_e = " << sigma_e);
-                DBG("sigma_z = " << sigma_z);
-
-                DBG("sigma_lhs = " << sigma_lhs);
-                DBG("sigma_rhs = " << sigma_rhs);
-            }
-            assert(sigma_lhs == sigma_rhs);
-
         }
     }
 
@@ -2898,10 +2930,16 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTes
     axbyGCD().resize(axGCD().size());
     {
         int k = 0;
+        ss().resize(bucketSize);
+        ssGCD().resize(ss().size());
+        LOG(INFO) << "candidates.size() " << candidates.size();
+        LOG(INFO) << "bucketSize " << bucketSize;
         for (size_t i = 0; i < bucketSize; ++i) {
+            ss()[i] = grc.get_z_bits(1024 + 210);
+            ssGCD()[i] = ss()[i] * candidates[i];
             for (size_t j = 0; j < alphasGCD.size(); ++j) {
                 axbyGCD()[k] = math::mod((axGCD()[k] * p_plus_qCRTs[k] + byGCD()[k] * rCRTs()[k]
-                                          + z[k]), alphasGCD[j]);
+                                          + z[k] + ssGCD()[i]), alphasGCD[j]);
                 ++k;
             }
         }
@@ -2913,7 +2951,6 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTes
             assert(false);
         }
     }
-    //DBG("Client gammaValues = " << gammaValues);
     transport.send(MessageType::AXB_MINUS_BYA_SHARES, std::pair{axbyGCD(), gammaValues});
     DBG("Participant (" << transport.getSocketId() <<
         ") received `axb - bya` shares");

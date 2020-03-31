@@ -2,31 +2,50 @@
 
 #include <functional>
 
-#include <boost/multiprecision/miller_rabin.hpp>
 #include <boost/math/special_functions/prime.hpp>
 #include <boost/multiprecision/gmp.hpp>
+#include <boost/multiprecision/miller_rabin.hpp>
 #include <boost/random.hpp>
 #include <boost/random/random_device.hpp>
 #include <exrandom/discrete_normal_distribution.hpp>
+#include <nfl/params.hpp>
 
-#include <sodium/randombytes.h>
 #include <gmpxx.h>
+#include <sodium/randombytes.h>
 #include "Common.hpp"
 
 
-/** Overriding abs for basic int type **/ 
+/** Overriding abs for basic int type **/
 namespace boost {
 namespace multiprecision {
-RegularInteger abs(RegularInteger in) {
-    return in;
-}
-}
-}
+RegularInteger abs(RegularInteger in) { return in; }
+}  // namespace multiprecision
+}  // namespace boost
 
 namespace ligero {
 namespace math {
 
+/** Scaling function to bring randomness within a desired range  
+ * @param val input, modulusIdx raw randomness, prime index 
+ * @return scaled randomness
+ */
 
+uint64_t scaleToPrime(uint64_t input, size_t modulusIdx) {
+    double scaleFactor = static_cast<double>(nfl::params<uint64_t>::P[modulusIdx])/static_cast<double>(1ull << 62);
+    uint64_t input62 = input & ((1ull << 62) - 1);
+    return static_cast<uint64_t>(static_cast<double>(input62)*scaleFactor);
+}
+
+uint64_t scaleToUpperBound(uint64_t input, size_t upperBound) {
+    float scaleFactor = static_cast<double>(upperBound)/static_cast<double>(1ull << 62);
+    uint64_t input62 = input & ((1ull << 62) - 1);
+    return static_cast<uint64_t>(static_cast<double>(input62)*scaleFactor);
+}
+
+/** Compute hash for given mpz value
+ * @param val MPZ_class value
+ * @return Hash of @p val
+ */
 std::string computeHash(mpz_class val) {
     std::string s = val.get_str();
     std::string os = val.get_str();
@@ -41,6 +60,10 @@ std::string computeHash(mpz_class val) {
     return std::move(std::string(reinterpret_cast<char*>(hash)));
 }
 
+/** Compute hash for given NFL polynomial
+ * @param val NFL polynomial
+ * @return Hash of @p val
+ */
 template <typename T, size_t Degree, size_t NbPrimesQ>
 std::string computeHash(nfl::poly_p<T, Degree, NbPrimesQ> val) {
     std::stringstream ss(std::stringstream::out | std::stringstream::binary);
@@ -57,26 +80,34 @@ std::string computeHash(nfl::poly_p<T, Degree, NbPrimesQ> val) {
     return result;
 }
 
+/** Compute hash for given value
+ * @param val ((a, b), c), where a, b is vector of mpz_class
+ * @return Hash of c
+ */
 std::string computeHash(std::pair<std::pair<std::vector<mpz_class>, std::vector<mpz_class>>, mpz_class> val) {
     mpz_class v = val.second;
     return computeHash(v);
 }
 
+/** Default hash function for any type, will throw a runtime exception */
 template <typename T>
 std::string computeHash(T val) {
     LOG(FATAL) << "computeHash for this type is not implemented yet";
 }
 
-
-
-/** Generate a vector of random numbers of 128-bit numbers **/
+/** Generate a vector of random numbers
+ * @param seed Seed to initialize the random generator
+ * @param size Length of the output random vector
+ * @param numBits Number of bits of each value, default to 128 bits
+ * @return A vector of random numbers
+ **/
 std::vector<mpz_class> generateRandomVector(mpz_class seed, size_t size, size_t numBits = 128) {
     std::vector<mpz_class> result(size);
 
     const int numBytes = lround(double(numBits) / 8);
     const size_t bufferSize = size * (numBytes + 1);
 
-    char *buf = new char[bufferSize];
+    char* buf = new char[bufferSize];
 
     size_t seedSize = (mpz_sizeinbase (seed.get_mpz_t(), 2) + CHAR_BIT-1) / CHAR_BIT;
     unsigned char seedArray[32U];
@@ -90,8 +121,7 @@ std::vector<mpz_class> generateRandomVector(mpz_class seed, size_t size, size_t 
         seedArray[i] = static_cast<unsigned char>(0);
     }
 
-    //const unsigned char seed[32] = {0};
-    randombytes_buf_deterministic((void *)buf, bufferSize, seedArray);
+    randombytes_buf_deterministic((void*)buf, bufferSize, seedArray);
 
     size_t k = 0;
     for (size_t i = 0; i < result.size(); ++i) {
@@ -100,12 +130,16 @@ std::vector<mpz_class> generateRandomVector(mpz_class seed, size_t size, size_t 
         k += numBytes;
         assert(result[i] > 0);
     }
-    delete [] buf;
+    delete[] buf;
 
     return result;
 }
 
-
+/** Generate a single mpz random value
+ * @param seed Seed to initialize random generator
+ * @param numBits Number of bits of generated value
+ * @return @p numBits bits random value
+ */
 mpz_class generateRandomValue(mpz_class seed, size_t numBits = 128) {
     mpz_class result;
     {
@@ -116,48 +150,35 @@ mpz_class generateRandomValue(mpz_class seed, size_t numBits = 128) {
 }
 
 /** A quick wrapper around GMP's powm implementation for different types. */
-mpz_class
-powm (const mpz_class& b, const mpz_class& p, const mpz_class& m) {
-
+mpz_class powm(const mpz_class& b, const mpz_class& p, const mpz_class& m) {
     mpz_class x(b);
-    mpz_powm(
-        x.get_mpz_t(),
-        x.get_mpz_t(),
-        p.get_mpz_t(),
-        m.get_mpz_t()
-    );
+    mpz_powm(x.get_mpz_t(), x.get_mpz_t(), p.get_mpz_t(), m.get_mpz_t());
 
     return x;
 }
 
 /** A quick wrapper around GMP's powm implementation for different types. */
 template <typename NumberType>
-NumberType
-powm (const NumberType& b, const NumberType& p, const NumberType& m) {
-    MPInt x (b);
-    MPInt y (p);
-    MPInt z (m);
+NumberType powm(const NumberType& b, const NumberType& p, const NumberType& m) {
+    MPInt x(b);
+    MPInt y(p);
+    MPInt z(m);
 
     MPInt o;
 
-    mpz_powm(
-        o.backend().data(),
-        x.backend().data(),
-        y.backend().data(),
-        z.backend().data()
-    );
+    mpz_powm(o.backend().data(),
+             x.backend().data(),
+             y.backend().data(),
+             z.backend().data());
 
     return NumberType(o);
 }
 
 /** A quick wrapper around GMP's powm implementation for different types. */
-RegularInteger
-powm (const RegularInteger& b, const long p, const RegularInteger& m) {
+RegularInteger powm (const RegularInteger& b, const long p, const RegularInteger& m) {
     MPInt x (b);
     MPInt y (p);
     MPInt z (m);
-
-//    MPInt o;
 
     mpz_powm(
         x.backend().data(),
@@ -169,8 +190,12 @@ powm (const RegularInteger& b, const long p, const RegularInteger& m) {
     return RegularInteger(x);
 }
 
-Int64
-divideAndRound(const Int64& a, const Int64& b) {
+/** Divide and round the quotient to nearest integer
+ * @param a divident
+ * @param b divisor
+ * @return quotient rounded to nearest integer
+ */
+Int64 divideAndRound(const Int64& a, const Int64& b) {
     Int64 quotient, remainder;
     boost::multiprecision::divide_qr(a, b, quotient, remainder);
     if (remainder * 2 >= b) {
@@ -179,13 +204,18 @@ divideAndRound(const Int64& a, const Int64& b) {
     return quotient;
 }
 
+/** 128 bits power
+ * @param a 64 bits integer
+ * @param exp 64 bits integer
+ * @return 128 bits @p a ^ @p exp
+ */
 WideInteger pow(RegularInteger a, RegularInteger exp) {
     MPInt x(0);
     MPInt y(a);
 
     mpz_pow_ui(
-        x.backend().data(), 
-        y.backend().data(), 
+        x.backend().data(),
+        y.backend().data(),
         exp);
 
     return WideInteger(x);
@@ -196,28 +226,37 @@ WideInteger pow(RegularInteger a, int exp) {
     MPInt y(a);
 
     mpz_pow_ui(
-        x.backend().data(), 
-        y.backend().data(), 
+        x.backend().data(),
+        y.backend().data(),
         exp);
 
     return WideInteger(x);
 }
 
-template<typename NumberType>
+/** N bits power
+ * @param a N bits number of type T
+ * @param exp 64 bits integer
+ * @return N bits @p a ^ @p exp of type T
+ */
+template <typename NumberType>
 NumberType pow(NumberType a, uint64_t exp) {
     MPInt x(0);
     MPInt y(a);
 
     mpz_pow_ui(
-        x.backend().data(), 
-        y.backend().data(), 
+        x.backend().data(),
+        y.backend().data(),
         exp);
 
     return NumberType(x);
 }
 
-MPInt
-divideAndRound(const MPInt& a, const MPInt& b) {
+/** Divide and round the quotient to nearest integer
+ * @param a divident of type mpz_int
+ * @param b divisor of type mpz_int
+ * @return quotient rounded to nearest integer
+ */
+MPInt divideAndRound(const MPInt& a, const MPInt& b) {
     MPInt quotient, remainder;
     boost::multiprecision::divide_qr(a, b, quotient, remainder);
     if (remainder * 2 >= b) {
@@ -226,8 +265,12 @@ divideAndRound(const MPInt& a, const MPInt& b) {
     return quotient;
 }
 
-int64_t
-divideAndRound(int64_t a, int64_t b) {
+/** Divide and round the quotient to nearest integer
+ * @param a divident of type int
+ * @param b divisor of type int
+ * @return quotient rounded to nearest integer
+ */
+int64_t divideAndRound(int64_t a, int64_t b) {
     int64_t remainder = a % b;
     int64_t result = static_cast<int64_t>(a / b);
     if (remainder * 2 >= b) {
@@ -236,18 +279,30 @@ divideAndRound(int64_t a, int64_t b) {
     return result;
 }
 
-mpz_class
-mod(const mpz_class& a, const mpz_class& b) {
+/** Mod function overloading
+ * @param a mpz_class
+ * @param b mpz_class
+ * @return @p a % @p b
+ */
+mpz_class mod(const mpz_class& a, const mpz_class& b) {
     return powm(a, 1, b);
 }
 
-MPInt
-mod(MPInt a, MPInt b) {
+/** Mod function overloading
+ * @param a boost mpz_int
+ * @param b boost mpz_int
+ * @return @p a % @p b
+ */
+MPInt mod(MPInt a, MPInt b) {
     return boost::multiprecision::powm(a, 1, b);
 }
 
-RegularInteger
-mod(RegularInteger a, RegularInteger b) {
+/** Mod function overloading
+ * @param a 64 bits integer
+ * @param b 64 bits integer
+ * @return @p a % @p b
+ */
+RegularInteger mod(RegularInteger a, RegularInteger b) {
 // return static_cast<RegularInteger>(boost::multiprecision::powm(MPInt(a), 1, MPInt(b)));
    return static_cast<RegularInteger>((static_cast<WideInteger>(a % b) + static_cast<WideInteger>(b)) % static_cast<WideInteger>(b));
 }
@@ -258,13 +313,21 @@ mod(WideInteger a, WideInteger b) {
    return (((a % b) + b) % b);
 }
 
-Int64
-mod(Int64 a, Int64 b) {
+/** Mod function overloading
+ * @param a 64 bits integer
+ * @param b 64 bits integer
+ * @return @p a % @p b
+ */
+Int64 mod(Int64 a, Int64 b) {
     return boost::multiprecision::powm(a, 1, b);
 }
 
-int64_t
-mod(int64_t a, int64_t b) {
+/** Mod function overloading
+ * @param a 64 bits integer
+ * @param b 64 bits integer
+ * @return @p a % @p b
+ */
+int64_t mod(int64_t a, int64_t b) {
     return ((a % b) + b) % b;
 }
 
@@ -287,13 +350,18 @@ struct ChiDist {
     }
 };
 
+/** Sample a vector of random field element
+ * @param m Size of total samples
+ * @param q Boundary
+ * @param chiStd Standard deviation
+ * @return A vector of random sample
+ */
 template <typename FieldT>
-std::vector<FieldT>
-sampleRandomVectorOverField(size_t m, FieldT q, double chiStd) {
-    //std::function<typename FieldT::underlyingType> 
+std::vector<FieldT> sampleRandomVectorOverField(size_t m, FieldT q, double chiStd) {
+    //std::function<typename FieldT::underlyingType>
     auto dist = ligero::math::ChiDist<typename FieldT::underlyingType>(std::random_device()(), chiStd);
-    std::vector<FieldT> e(m);   
-    
+    std::vector<FieldT> e(m);
+
     for (int i = 0; i < static_cast<int>(m); i++) {
         typename FieldT::underlyingType tmp;
         do {
@@ -388,7 +456,7 @@ mpz_class vectorProduct(const std::vector<mpz_class>& xs) {
 std::pair<std::vector<mpz_class>, std::vector<size_t>>
 fixed_bucket_n_primes (int productBitThreshold, size_t degree, int tauLimitBit)
 {
-    int number_of_buckets = std::ceil(double(productBitThreshold)/double(tauLimitBit)); // This rounds down. 
+    int number_of_buckets = std::ceil(double(productBitThreshold)/double(tauLimitBit)); // This rounds down.
     std::vector<mpz_class> alphas(number_of_buckets);
     std::vector<size_t> bucketSize(number_of_buckets);
 
@@ -422,7 +490,7 @@ fixed_bucket_n_primes (int productBitThreshold, size_t degree, int tauLimitBit)
 std::pair<std::vector<mpz_class>, std::vector<size_t>>
 balanced_bucket_n_primes (int productBitThreshold, size_t degree, int tauLimitBit, int startJ = 1)
 {
-    int number_of_buckets = std::ceil(double(productBitThreshold)/double(tauLimitBit)); // This rounds down. 
+    int number_of_buckets = std::ceil(double(productBitThreshold)/double(tauLimitBit)); // This rounds down.
     std::vector<mpz_class> alphas(number_of_buckets);
     std::vector<mpz_class> primes;
     mpz_class alpha = 1;
@@ -444,9 +512,8 @@ balanced_bucket_n_primes (int productBitThreshold, size_t degree, int tauLimitBi
     }
     double sum = 0.0;
     for ( int i = primes.size()-1;i >= 0;  i--)
-    //for ( int i = 0; i < primes.size(); i++)
     {
-      double maxweight = weights[0]; 
+      double maxweight = weights[0];
       int maxpos = 0;
       for (int j = 1; j < number_of_buckets; j++)
       {
@@ -458,33 +525,13 @@ balanced_bucket_n_primes (int productBitThreshold, size_t degree, int tauLimitBi
         }
       }
       alphas[maxpos] *= primes[i];
-      weights[maxpos] *= (double(1.0) - (double(1)/primes[i].get_d())); 
+      weights[maxpos] *= (double(1.0) - (double(1)/primes[i].get_d()));
     }
     for ( int i = 0; i < number_of_buckets; i++)
     {
       weights[i] = double(1)/weights[i];
       sum += weights[i];
     }
-
-/*    while(!primes.empty())
-    {
-        double weight=1;
-        auto it = primes.begin();
-        alpha = *it;
-        weight *= (double(1.0) - (double(1)/alpha.get_d()));
-        it = primes.erase(it);
-        while(!primes.empty() && mpz_sizeinbase(alpha.get_mpz_t(), 2) < tauLimitBit )
-        {
-            weight *= (double(1.0) - (double(1)/(primes.back()).get_d()));
-            alpha *= primes.back();
-            primes.pop_back();
-        }
-        alphas.push_back(alpha);
-        weight = double(1)/weight;
-        sum += weight;
-        weights.push_back(weight);
-
-    }*/
 
     std::vector<size_t> bucketSize(weights.size());
     size_t total = 0;

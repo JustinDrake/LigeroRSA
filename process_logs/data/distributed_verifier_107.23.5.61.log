@@ -1,0 +1,131 @@
+05:51:44.890 Receiving Data GATHER_PUBLIC_DATA
+05:51:45.551 Deserialization Completed for GATHER_PUBLIC_DATA
+05:51:57.432 Receiving Data GATHER_PROOFS
+05:51:57.577 Deserialization Completed for GATHER_PROOFS
+05:51:57.580 ‹6.a. verification, idle, modulus 0, , , ,0.00 MB,0.00 MB,03:54.526147,03:54.571952,
+05:51:57.580 Verifying modulus idx:0
+05:52:16.495 Receiving Data GATHER_PROOFS
+05:52:16.511 Deserialization Completed for GATHER_PROOFS
+05:52:18.527 Verification for modulus idx:0 succeeded
+05:52:18.527 ‹6.a. verification, compute, modulus 0, , , ,0.00 MB,0.00 MB,00:20.947368,04:15.519414,
+05:52:18.537 ‹6.a. verification, idle, modulus 1, , , ,0.00 MB,0.00 MB,00:00.000077,04:15.528457,
+05:52:18.537 Verifying modulus idx:1
+05:52:33.328 Verification for modulus idx:1 succeeded
+05:52:33.328 ‹6.a. verification, compute, modulus 1, , , ,0.00 MB,0.00 MB,00:14.791462,04:30.319993,
+05:52:36.265 Receiving Data GATHER_PROOFS
+05:52:36.289 Deserialization Completed for GATHER_PROOFS
+05:52:36.290 ‹6.a. verification, idle, modulus 2, , , ,0.00 MB,0.00 MB,00:02.954184,04:33.281795,
+05:52:36.290 Verifying modulus idx:2
+05:52:51.466 Verification for modulus idx:2 succeeded
+05:52:51.466 ‹6.a. verification, compute, modulus 2, , , ,0.00 MB,0.00 MB,00:15.176040,04:48.457969,
+05:52:56.024 Receiving Data GATHER_PROOFS
+05:52:56.048 Deserialization Completed for GATHER_PROOFS
+05:52:56.049 ‹6.a. verification, idle, modulus 3, , , ,0.00 MB,0.00 MB,00:04.576998,04:53.040867,
+05:52:56.049 Verifying modulus idx:3
+05:53:11.218 Verification for modulus idx:3 succeeded
+05:53:11.218 ‹6.a. verification, compute, modulus 3, , , ,0.00 MB,0.00 MB,00:15.169049,05:08.209998,
+05:53:16.038 Receiving Data GATHER_PROOFS
+05:53:16.084 Deserialization Completed for GATHER_PROOFS
+05:53:16.088 ‹6.a. verification, idle, modulus 4, , , ,0.00 MB,0.00 MB,00:04.864094,05:13.080314,
+05:53:16.088 Verifying modulus idx:4
+05:53:30.451 Verification for modulus idx:4 succeeded
+05:53:30.451 ‹6.a. verification, compute, modulus 4, , , ,0.00 MB,0.00 MB,00:14.362927,05:27.443340,
+05:53:36.119 Receiving Data GATHER_PROOFS
+05:53:36.155 Deserialization Completed for GATHER_PROOFS
+05:53:36.156 ‹6.a. verification, idle, modulus 5, , , ,0.00 MB,0.00 MB,00:05.698248,05:33.148054,
+05:53:36.156 Verifying modulus idx:5
+05:53:50.456 Verification for modulus idx:5 succeeded
+05:53:50.456 ‹6.a. verification, compute, modulus 5, , , ,0.00 MB,0.00 MB,00:14.300096,05:47.448232,
+05:53:56.200 Receiving Data GATHER_PROOFS
+05:53:56.276 Deserialization Completed for GATHER_PROOFS
+05:53:56.281 ‹6.a. verification, idle, modulus 6, , , ,0.00 MB,0.00 MB,00:05.818730,05:53.272923,
+05:53:56.281 Verifying modulus idx:6
+05:54:13.174 Verification for modulus idx:6 succeeded
+05:54:13.174 ‹6.a. verification, compute, modulus 6, , , ,0.00 MB,0.00 MB,00:16.893142,06:10.166161,
+05:54:16.030 Receiving Data GATHER_PROOFS
+05:54:16.056 Deserialization Completed for GATHER_PROOFS
+05:54:16.057 ‹6.a. verification, idle, modulus 7, , , ,0.00 MB,0.00 MB,00:02.875808,06:13.048619,
+05:54:16.057 Verifying modulus idx:7
+05:54:30.749 Verification for modulus idx:7 succeeded
+05:54:30.749 ‹6.a. verification, compute, modulus 7, , , ,0.00 MB,0.00 MB,00:14.692024,06:27.740720,
+05:54:35.816 Receiving Data GATHER_PROOFS
+05:54:35.842 Deserialization Completed for GATHER_PROOFS
+05:54:35.843 ‹6.a. verification, idle, modulus 8, , , ,0.00 MB,0.00 MB,00:05.087388,06:32.834630,
+05:54:35.843 Verifying modulus idx:8
+05:54:45.476 Receiving Data GATHER_PROOFS
+05:54:45.494 Deserialization Completed for GATHER_PROOFS
+05:54:50.119 Verification for modulus idx:8 succeeded
+05:54:50.119 ‹6.a. verification, compute, modulus 8, , , ,0.00 MB,0.00 MB,00:14.276652,06:47.111363,
+05:54:50.127 ‹6.a. verification, idle, modulus 9, , , ,0.00 MB,0.00 MB,00:00.000083,06:47.118990,
+05:54:50.127 Verifying modulus idx:9
+05:54:55.171 Receiving Data GATHER_PROOFS
+05:54:55.191 Deserialization Completed for GATHER_PROOFS
+05:54:59.514 Verification for modulus idx:9 succeeded
+05:54:59.514 ‹6.a. verification, compute, modulus 9, , , ,0.00 MB,0.00 MB,00:09.386926,06:56.505988,
+05:54:59.517 ‹6.a. verification, idle, modulus 10, , , ,0.00 MB,0.00 MB,00:00.000078,06:56.508799,
+05:54:59.517 Verifying modulus idx:10
+05:55:04.888 Receiving Data GATHER_PROOFS
+05:55:04.914 Deserialization Completed for GATHER_PROOFS
+05:55:10.899 Verification for modulus idx:10 succeeded
+05:55:10.899 ‹6.a. verification, compute, modulus 10, , , ,0.00 MB,0.00 MB,00:11.382214,07:07.891072,
+05:55:10.902 ‹6.a. verification, idle, modulus 11, , , ,0.00 MB,0.00 MB,00:00.000083,07:07.894337,
+05:55:10.902 Verifying modulus idx:11
+05:55:14.602 Receiving Data GATHER_PROOFS
+05:55:14.621 Deserialization Completed for GATHER_PROOFS
+05:55:20.104 Verification for modulus idx:11 succeeded
+05:55:20.104 ‹6.a. verification, compute, modulus 11, , , ,0.00 MB,0.00 MB,00:09.201874,07:17.096277,
+05:55:20.107 ‹6.a. verification, idle, modulus 12, , , ,0.00 MB,0.00 MB,00:00.000084,07:17.098990,
+05:55:20.107 Verifying modulus idx:12
+05:55:24.315 Receiving Data GATHER_PROOFS
+05:55:24.332 Deserialization Completed for GATHER_PROOFS
+05:55:29.366 Verification for modulus idx:12 succeeded
+05:55:29.366 ‹6.a. verification, compute, modulus 12, , , ,0.00 MB,0.00 MB,00:09.259257,07:26.358312,
+05:55:29.368 ‹6.a. verification, idle, modulus 13, , , ,0.00 MB,0.00 MB,00:00.000077,07:26.360376,
+05:55:29.368 Verifying modulus idx:13
+05:55:34.005 Receiving Data GATHER_PROOFS
+05:55:34.023 Deserialization Completed for GATHER_PROOFS
+05:55:38.825 Verification for modulus idx:13 succeeded
+05:55:38.825 ‹6.a. verification, compute, modulus 13, , , ,0.00 MB,0.00 MB,00:09.456247,07:35.816676,
+05:55:38.827 ‹6.a. verification, idle, modulus 14, , , ,0.00 MB,0.00 MB,00:00.000082,07:35.818719,
+05:55:38.827 Verifying modulus idx:14
+05:55:43.722 Receiving Data GATHER_PROOFS
+05:55:43.740 Deserialization Completed for GATHER_PROOFS
+05:55:48.347 Verification for modulus idx:14 succeeded
+05:55:48.347 ‹6.a. verification, compute, modulus 14, , , ,0.00 MB,0.00 MB,00:09.520593,07:45.339371,
+05:55:48.351 ‹6.a. verification, idle, modulus 15, , , ,0.00 MB,0.00 MB,00:00.000082,07:45.342629,
+05:55:48.351 Verifying modulus idx:15
+05:55:53.450 Receiving Data GATHER_PROOFS
+05:55:53.468 Deserialization Completed for GATHER_PROOFS
+05:55:57.609 Verification for modulus idx:15 succeeded
+05:55:57.609 ‹6.a. verification, compute, modulus 15, , , ,0.00 MB,0.00 MB,00:09.258656,07:54.601355,
+05:55:57.612 ‹6.a. verification, idle, modulus 16, , , ,0.00 MB,0.00 MB,00:00.000113,07:54.603986,
+05:55:57.612 Verifying modulus idx:16
+05:56:03.197 Receiving Data GATHER_PROOFS
+05:56:03.219 Deserialization Completed for GATHER_PROOFS
+05:56:08.986 Verification for modulus idx:16 succeeded
+05:56:08.986 ‹6.a. verification, compute, modulus 16, , , ,0.00 MB,0.00 MB,00:11.374285,08:05.978336,
+05:56:08.990 ‹6.a. verification, idle, modulus 17, , , ,0.00 MB,0.00 MB,00:00.000093,08:05.981958,
+05:56:08.990 Verifying modulus idx:17
+05:56:12.968 Receiving Data GATHER_PROOFS
+05:56:12.987 Deserialization Completed for GATHER_PROOFS
+05:56:19.356 Verification for modulus idx:17 succeeded
+05:56:19.356 ‹6.a. verification, compute, modulus 17, , , ,0.00 MB,0.00 MB,00:10.366381,08:16.348401,
+05:56:19.359 ‹6.a. verification, idle, modulus 18, , , ,0.00 MB,0.00 MB,00:00.000083,08:16.351115,
+05:56:19.359 Verifying modulus idx:18
+05:56:22.739 Receiving Data GATHER_PROOFS
+05:56:22.757 Deserialization Completed for GATHER_PROOFS
+05:56:28.763 Verification for modulus idx:18 succeeded
+05:56:28.763 ‹6.a. verification, compute, modulus 18, , , ,0.00 MB,0.00 MB,00:09.403788,08:25.754961,
+05:56:28.766 ‹6.a. verification, idle, modulus 19, , , ,0.00 MB,0.00 MB,00:00.000081,08:25.757754,
+05:56:28.766 Verifying modulus idx:19
+05:56:32.526 Receiving Data GATHER_PROOFS
+05:56:32.544 Deserialization Completed for GATHER_PROOFS
+05:56:32.545 Got all proofs
+05:56:38.859 Verification for modulus idx:19 succeeded
+05:56:38.859 ‹6.a. verification, compute, modulus 19, , , ,0.00 MB,0.00 MB,00:10.093625,08:35.851443,
+05:56:38.863 ‹6.a. verification, idle, modulus 20, , , ,0.00 MB,0.00 MB,00:00.000081,08:35.855145,
+05:56:38.863 Verifying modulus idx:20
+05:56:48.568 Verification for modulus idx:20 succeeded
+05:56:48.568 ‹6.a. verification, compute, modulus 20, , , ,0.00 MB,0.00 MB,00:09.704540,08:45.559760,
+05:57:54.539 All proofs successfully verified.
+Peak Memory = 1531092 Kb
