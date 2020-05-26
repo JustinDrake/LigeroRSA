@@ -2,6 +2,17 @@
 #include "Ligero.hpp"
 #include "Math.hpp"
 #include <boost/multiprecision/miller_rabin.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/functional/hash.hpp>
+#include <boost/uuid/uuid_io.hpp>
+
+
+#include <boost/serialization/vector.hpp>
+#include <fstream>
+#include <iostream>
+
+#include <boost/serialization/unordered_map.hpp>
 #include "LatticeEncryption.hpp"
 #include "Factoring.hpp"
 #include "Common.hpp"
@@ -11,12 +22,16 @@
 
 #include <boost/archive/binary_iarchive.hpp>
 
-
 using namespace ligero;
 
-std::vector<mpz_class> alphasPS, alphasCAN, alphasGCD;
-std::vector<size_t> bucketSizePS, bucketSizeCAN, bucketSizeGCD;
+static ECDSA<ECP, SHA256>::PublicKey publicKey;
+static ECDSA<ECP, SHA256>::PrivateKey privateKey;
+AutoSeededRandomPool prng;
 
+static std::vector<mpz_class> alphasPS, alphasCAN, alphasGCD;
+static std::vector<size_t> bucketSizePS, bucketSizeCAN, bucketSizeGCD;
+
+std::unordered_map<SocketId, ECDSA<ECP, SHA256>::PublicKey, boost::hash<SocketId>> partiesPublicKeys;
 
 constexpr auto degree = 1 << 16;
 constexpr auto p = 9;
@@ -37,6 +52,7 @@ static int numParties;
 static int currentStep = 1;
 static size_t minRowSize = -1;
 
+/** Helper function to prune and reorder eit array */
 std::vector<std::vector<mpz_class>> pruneAndReorderEIT (
         const std::vector<mpz_class>& eit,
         const std::vector<int>& flags,
@@ -80,6 +96,7 @@ std::vector<std::vector<mpz_class>> pruneAndReorderEIT (
     return transposed;
 }
 
+/** Helper function to compute eit and flags arrays */
 std::tuple<std::vector<mpz_class>, std::vector<int>, std::vector<mpz_class>> computeEITAndFlags(std::array<mpz_t, degree> c_mpz_t) {
 
     std::vector<mpz_class> eit(primesPS);
@@ -140,36 +157,82 @@ std::tuple<std::vector<mpz_class>, std::vector<int>, std::vector<mpz_class>> com
 }
 
 
+/** Helper to validate given round by comparing the expected result to 
+ *  the computed result*/
 template <typename T>
 T validate(MessageType expectedMessageType, std::function<T(T, T)> op, T origAccumulator) {
     T computedAccumulator = origAccumulator;
-    //try {
     if (ifs.is_open()) {
         // Now read and validate each round
         MessageType t;
+        std::cout << "Expected message type: " << std::endl; 
+        std::cout << "READ for: " << msgs[1 + int(expectedMessageType) - int(MessageType::ID_PARTY)] << std::endl;
         ia >> t;
 
         int msgId = int(t);
-        //std::cout << "t: " << msgId << std::endl;
-        if (msgId > 0) msgId = 1 + msgId - int(MessageType::ID_PARTY);
-        std::cout << currentStep++ << ". " << msgs[msgId] << std::endl;
-
+        
+        //std::cout << "int(t): " << msgId << std::endl;
+        //std::cout << "t: " << (int)t << std::endl;
+        //std::cout << "expectedMT: " << (int)expectedMessageType << std::endl;
         if (t != expectedMessageType) {
-            std::cout << "Unexpected MessageType. Expected message type: " << msgs[1 + int(expectedMessageType) - int(MessageType::ID_PARTY)]; 
+            std::cout << "Unexpected MessageType. Expected message type: " << msgs[1 + int(expectedMessageType) - int(MessageType::ID_PARTY)] << std::endl; 
             if (1 + int(t) - int(MessageType::ID_PARTY) < msgs.size()) {
-                std::cout << "Got MessageType " << msgs[1 + int(t) - int(MessageType::ID_PARTY)];
+                std::cout << "Got MessageType " << msgs[1 + int(t) - int(MessageType::ID_PARTY)] << std::endl;
             } else {
-                std::cout << "Got MessageType" << 1 + int(t) - int(MessageType::ID_PARTY);
+                std::cout << "Got MessageType" << 1 + int(t) - int(MessageType::ID_PARTY) << std::endl;
             }
-            assert(false);
+            exit(1);
+        } else {
+            if (msgId > 0) msgId = 1 + msgId - int(MessageType::ID_PARTY);
+            std::cout << currentStep++ << ". " << msgs[msgId] << std::endl;
         }
+
         bool initialized = false;
         for (size_t i = 0; i < numParties; ++i) {
             std::cout << "i = " << i << std::endl;
             if (ifs && ifs.peek() != EOF) {
-                std::pair<MessageType, T> zzz;
+                std::pair<MessageType, std::pair<SocketId, std::string>> zzz;
                 ia >> zzz;
-                auto [ti, x] = zzz;
+                auto [ti, idAndMsg] = zzz;
+                auto [partyId, xWithSig] = idAndMsg;
+
+                std::string signature = xWithSig.substr(0, 64);
+                // verify signature
+
+                std::string msgToVerify = xWithSig.substr(64, xWithSig.size() - 64);
+                {
+                    auto pcit = partiesPublicKeys.find(partyId);
+                    if (pcit == partiesPublicKeys.end()) {
+                        std::cout << "Could not find public key for party " << boost::uuids::to_string(partyId) << std::endl;
+                        exit(1);
+                    }
+
+                    /*
+                    bool valKeyResult = pcit->second.Validate(prng, 3);
+                    if (!valKeyResult) {
+                        std::cout << "Failed to validate public key for party " << boost::uuids::to_string(partyId) << std::endl;
+                        exit(1);
+                    } else {
+                        std::cout << "Successfully validated public key for party " << boost::uuids::to_string(partyId) << std::endl;
+                    }
+                    */
+
+                    ECDSA<ECP, SHA256>::Verifier verifier(pcit->second);
+
+                    bool result = verifier.VerifyMessage((const byte*)&msgToVerify[0], msgToVerify.size(), (const byte*)&signature[0], signature.size());
+
+                    // Verification failure?
+                    if (!result) {
+                        std::cout << "Failed signature verification for party " << boost::uuids::to_string(partyId) << std::endl;
+                        exit(1);
+                    } 
+                }
+
+                std::istringstream ssi(msgToVerify);
+                boost::archive::binary_iarchive iassi(ssi);
+                T x;
+                iassi >> x;
+
                 MessageType xt = MessageType(ti);
                 if (xt != t) {
                     std::cout << "Unexpected MessageType" << std::endl;
@@ -196,9 +259,10 @@ T validate(MessageType expectedMessageType, std::function<T(T, T)> op, T origAcc
         std::pair<MessageType, T> ea;
         ia >> ea;
         auto [at, expectedAccumulator] = ea;
-
-        if (at != expectedMessageType || expectedAccumulator != computedAccumulator) {
-            LOG(FATAL) << "Accumulated result did NOT match expected value";
+        if (expectedMessageType != MessageType::SYNCHRONIZE_NOW) {
+            if (at != expectedMessageType || expectedAccumulator != computedAccumulator) {
+                LOG(FATAL) << "Accumulated result did NOT match expected value";
+            }
         }
     } else {
         std::cout << "file is not good" << std::endl;
@@ -207,19 +271,63 @@ T validate(MessageType expectedMessageType, std::function<T(T, T)> op, T origAcc
 }
 
 
+
 int main(int argc, char** argv)
 {
     
-    //try {
+
     if (ifs.is_open()) {
+
 
         // Read the number of parties
         ia >> numParties;
-        std::cout << "numParties: " << numParties << std::endl;
+
+        // Load coordinators public key from file
+        {
+            FileSource fs("publicKey.coordinator", true);
+            publicKey.Load(fs);
+
+            bool valKeyResult = publicKey.Validate(prng, 3);
+            if (!valKeyResult) {
+                std::cout << "Failed to validate public key for coordinator" << std::endl;
+                exit(1);
+            } else {
+                std::cout << "Successfully validated public key for coordinator " << std::endl;
+            }
+        }
+        // Load parties public keys
+        {
+            boost::filesystem::ifstream pcifs;
+            pcifs.open("publicKey.parties", std::ios::in | std::ios::binary);
+            boost::archive::binary_iarchive pcIArchive(pcifs);
+
+            for (size_t i = 0; i < numParties; ++i) {
+                std::pair<SocketId, std::string> x;
+                pcIArchive >> x;
+
+                ECDSA<ECP, SHA256>::PublicKey pk;
+                StringSource pkss(x.second, true);
+                pk.Load(pkss);
+
+                // validate public key
+                bool valKeyResult = pk.Validate(prng, 3);
+                if (!valKeyResult) {
+                    std::cout << "Failed to validate public key for party " << boost::uuids::to_string(x.first) << std::endl;
+                    exit(1);
+                } else {
+                    std::cout << "Successfully validated public key for party " << to_string(x.first) << std::endl;
+                }
+
+                partiesPublicKeys[x.first] = std::move(pk);
+            }
+
+            pcifs.close();
+        }
+
 
         std::vector<mpz_class> candidatesCAN, candidatesPostSieve, candidatesJacobi;
 
-        ProtocolConfig<uint64_t> config = ProtocolConfig<uint64_t>(numParties, p, q, degree, sigma, lambda, tau_limit_bit, pbs, ProtocolMode::NORMAL);
+        ProtocolConfig<uint64_t> config = ProtocolConfig<uint64_t>(numParties, p, q, degree, sigma, lambda, tau_limit_bit, pbs, ProtocolMode::NORMAL, publicKey);
         auto e = lattice::LatticeEncryption<uint64_t, degree, p, q>(config);
 
         std::tie(alphasPS, bucketSizePS) = math::balanced_bucket_n_primes(config.pbs(), primesPS, config.tauLimitBit(), 1);
@@ -487,7 +595,7 @@ int main(int argc, char** argv)
                         mpz_gcd(result, candidates_raw[k].get_mpz_t(),prime.get_mpz_t());
                         if(mpz_cmp_ui(result,1) != 0)
                         {
-                            LOG(INFO) << "Candidate[" << k << "] = " << candidates_raw[k] << " is divisible by " << boost::math::prime(zz);
+                            std::cout << "Candidate[" << k << "] = " << candidates_raw[k] << " is divisible by " << boost::math::prime(zz) << std::endl;
                             assert(false);
                         }
                         mpz_clear(result);
@@ -746,6 +854,7 @@ int main(int argc, char** argv)
             int zc = 0;
             for (int i = 0; i < candidates.size(); ++i) {
 
+                // TODO: extract into a method
                 std::vector<mpz_class> x(alphasGCD.size());
                 for (int zz = 0; zz < alphasGCD.size(); ++zz) {
                     x[zz] = zCRTs[zc];
@@ -823,6 +932,10 @@ int main(int argc, char** argv)
                 discard[i] = discardGCD[i] | discardJacobi[i];
             }
 
+
+
+
+            // TODO: check flags
             boost::dynamic_bitset<> discardFlagsGCD;
             MessageType discardFlagsGCDType;
             ia >> discardFlagsGCDType;
@@ -849,26 +962,7 @@ int main(int argc, char** argv)
         }
 
         std::cout << std::endl << ">>>>  VALIDATION PASSED <<<<" << std::endl;
-        /*
-           while (ifs && ifs.peek() != EOF) {
-           MessageType t;
-           ia >> t;
-           int msgId = int(t);
-           std::cout << "t: " << msgId << std::endl;
-           if (msgId > 0) msgId = msgId - int(MessageType::ID_PARTY);
-           std::cout << "header: " << msgs[msgId] << std::endl;
-
-           }
-           */
     }
-    /*
-       } catch (...) {
-       std::cout << "caught exception" << std::endl;
-       ifs.close();
-       }
-       */
-
     ifs.close();
     return 0;
 }
-

@@ -4,7 +4,6 @@
 #include "Transport.hpp"
 #include "Common.hpp"
 #include "Math.hpp"
-#include <boost/multiprecision/miller_rabin.hpp>
 #include "LatticeEncryption.hpp"
 #include "Factoring.hpp"
 #include <functional>
@@ -29,8 +28,9 @@ public:
 
     EncryptedCoordinator(ProtocolConfig<T>& _config) : config(_config) {}
 
-    /*
-     * Host key generation in the coordinator side.
+    /** Host key generation in the coordinator side. Updates key pair class fields.
+     * @param trans communication helper
+     * @return 0 on success, error on failure
      */
         expected<int> hostGenerateKeyPair(ZeroMQCoordinatorTransport& trans) {
             DBG("Starting keygen");
@@ -55,6 +55,14 @@ public:
             return 0;
         }
 
+        /** Helper function to prune and reorder party's shares.
+         * @param as shares
+         * @param bs shares
+         * @param flags used to prune as and bs
+         * @param numAlphas number of alpha's in the buckets
+         * @param bucketSize array of bucket sizes
+         * @return a matrix with valid shares only
+         */
         std::vector<std::vector<mpz_class>>
             pruneAndReorderShares(
                 const std::vector<mpz_class> &as,
@@ -87,6 +95,17 @@ public:
             return result;
         }
 
+        /** Verify GCD data. Used when protocol failed to find valid candidate.
+         * @param special determines special party
+         * @parma sid party's unique id
+         * @param p_shares party's p shares
+         * @param q_shares party's q shares
+         * @param candidates
+         * @param x triples x values
+         * @param y triples y values
+         * @param z truples z values
+         * @return true when verification passes, and false when fails
+         */
         bool checkGCD(bool special,
                       const SocketId &sid, 
                       const std::vector<mpz_class>& p_shares, 
@@ -215,6 +234,17 @@ public:
         }
 
 
+        /** Helper to verify jacobi data from parties
+         * Used in verificaiton when protocol failed to find valid moduli
+         * @param special determines special party
+         * @parma sid party's unique id
+         * @param p_shares party's p shares
+         * @param q_shares party's q shares
+         * @param candidates
+         * @param gammaSeedValue jacbobi's randomness seed
+         * @param gvShare communicated gamma value shares
+         * @return true when verification passes, and false when fails
+         */
         bool checkJacobi(bool special,
                          const SocketId &sid, 
                          const std::vector<mpz_class>& p_shares, 
@@ -320,6 +350,12 @@ public:
         }
 
 
+        /** Asks parties for all their data if protocol failed to compute valid candidate
+         * and verifies all the data shares from the parties.
+         * @param transport coordinator's communication helper
+         * @param e encryption helper
+         * @return true when verification passes, and false when fails
+         */
         bool verifyNoModuli(ZeroMQCoordinatorTransport& transport,
                             lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>& e) {
             LOG(INFO) << "Verifying party randomness";
@@ -503,8 +539,8 @@ public:
                 if (passed) {
                     // Run candidates through miller rabin
                     for (int i = 0; i < pq_size; ++i) {
-                        if (boost::multiprecision::miller_rabin_test(MPInt(prime_shares[2 * i].get_mpz_t()), 4) &&
-                           boost::multiprecision::miller_rabin_test(MPInt(prime_shares[2 * i + 1].get_mpz_t()), 4)) {
+                        if (mpz_probab_prime_p(prime_shares[2 * i].get_mpz_t(), 4) &&
+                            mpz_probab_prime_p(prime_shares[2 * i + 1].get_mpz_t(), 4)) {
 
                             LOG(INFO) << "Verification for Miller-Rabin test failed (both are primes according to Miller-Rabin test).";
                             DBG("prime_shares[" << 2 * i << "] = " << prime_shares[2 * i]);
@@ -738,6 +774,9 @@ public:
             return true;
         }
 
+        /** Helper to compute eit array and flags
+         * @param c_mpz_t raw version of eit
+         * @return eit, flags, and c arrays */
         std::tuple<std::vector<mpz_class>,
                    std::vector<int>, 
                    std::vector<mpz_class>> computeEITAndFlags(std::array<mpz_t, Degree> c_mpz_t) {
@@ -796,6 +835,11 @@ public:
             return {eit, flags, c};
         }
 
+    /** Hosts pre-sieving rounds for coordinator
+     * @param transport coordinator's communication helper
+     * @param e encryption helper
+     * @return a tuple of four values: eit_pruned matrix, alphasPS_tick array, c_can array, and c_gcd array
+     */
     expected<std::tuple< std::vector<std::vector<mpz_class>>,  // eit_pruned
              std::vector<mpz_class>,               // alphasPS_tick
              std::vector<mpz_class>,               // c_can
@@ -1004,6 +1048,12 @@ public:
         return std::make_tuple(eit_prunedPS, alphasPS_tick, c_can, c_gcd);
     }
 
+    /** Runs host candidates generation rounds for corodinator
+     * @param transport coordinator's communication helper
+     * @param eit_pruned a pruned eit array
+     * @param alphasPS_tick an extended array of alphas for pre-sieveing
+     * @param c_can candidate generation part of c array from triples generation rounds
+     */
     expected<std::vector<mpz_class>>
     hostModulusCandidates (
         ZeroMQCoordinatorTransport& transport,
@@ -1075,7 +1125,6 @@ public:
         by_modulus = ax_by_sum.second;
         DBG("Broadcast ax and by values");
         transport.broadcast(MessageType::AX_BY_VALUE, ZeroMQCoordinatorTransport::ids, ax_by_sum);
-
 
         // Step 6. Parties send (a-x)bi + (b-y)ai  - zi to the coordinator (special party sends a-x)bi+(b-y)ai - (a-x)(b-y) - zi - c) and get it aggregated.
         auto maybe_ab = transport.awaitAggregateVectorInput<std::vector<mpz_class>>
@@ -1174,8 +1223,13 @@ public:
         return candidates;
     }
 
-    expected<Unit> hostRegistration (ZeroMQCoordinatorTransport& transport) {
-        auto result = transport.awaitRegistration();
+
+    /** Hosts parties registrations and broadcasts protocol configuration
+     * @param transport coordinator's communication helper
+     * @return empty Unit on success and error otherwise
+     */
+    expected<Unit> hostRegistration (ZeroMQCoordinatorTransport& transport, bool speedtest) {
+        auto result = transport.awaitRegistration(speedtest);
 
         if (hasError(result)) { return getError(result); }
 
@@ -1187,6 +1241,11 @@ public:
         return Unit{};
     }
 
+    /** Helper function to prune and reorder eit array of candidates
+     * @param eit array
+     * @param flags used to prune eit array
+     * @param numAlphas number of alphas in the buckets used in CRT representation
+     */
     std::vector<std::vector<mpz_class>> pruneAndReorderEIT (
             const std::vector<mpz_class>& eit,
             const std::vector<int>& flags,
@@ -1231,6 +1290,11 @@ public:
     }
 
 
+    /** Hosts GCD and Jacobi biprimality tests
+     * @param transport coordinator's communication helper
+     * @param c_gcd is a gcd part of the c array computed during triples generation rounds
+     * @param candidates array
+     */
     expected<boost::dynamic_bitset<>> hostGCDandJacobiTest (
         ZeroMQCoordinatorTransport& transport,
         const std::vector<mpz_class>& c_gcd,
@@ -1444,6 +1508,11 @@ public:
     }
 
 
+    /** Hosts Jacobi biprimality test rounds of the protocol.
+     * @param transport communication helper
+     * @param candidates to test and prune with Jacobi test
+     * @return flags array of candidates that survived Jacobi test
+     */
     expected<boost::dynamic_bitset<>> hostJacobiProtocol (
         ZeroMQCoordinatorTransport& transport,
         const std::vector<mpz_class>& candidates
@@ -1507,6 +1576,12 @@ public:
         return discard;
     }
 
+    /** Hosts throughput test.
+     * @param transport communication helper
+     * @param tconfig throughput test configuration structure
+     * @param throughput_cutoff cutoff param
+     * @return empty Unit on success, error on failure
+     */
     expected<Unit> hostThroughputTest(
         ZeroMQCoordinatorTransport& transport,
         throughput_test_config tconfig,
@@ -1532,8 +1607,16 @@ public:
         return Unit{};
     }
 
+    /** Coordinator's host helper function
+     * @param transport communication helper
+     * @param enc encryption helper
+     * @param needRegistration true if registration needed
+     * @param restartRemaining number of remaining restarts
+     * @return empty Unit on success, error on failure
+     */
     expected<Unit> hostHelper(ZeroMQCoordinatorTransport& transport,
         lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>& enc,
+        bool speedtest,
         bool needRegistration,
         int *restartRemaining
     ) {
@@ -1542,7 +1625,7 @@ public:
             return Error::TOO_MANY_RESTART;
         }
 
-        auto result = registerAndHostRSACeremony(transport, enc, restartRemaining, needRegistration);
+        auto result = registerAndHostRSACeremony(transport, enc, restartRemaining, speedtest, needRegistration);
         if (!hasError(result)) {
             // No errors, we are good to go
             return Unit{};
@@ -1558,7 +1641,7 @@ public:
         else if (err == Error::MODULUS_NOT_FOUND) {
             // Since there are no kick out, restart without re-registration
             (*restartRemaining)--;
-            return hostHelper(transport, enc, false, restartRemaining);
+            return hostHelper(transport, enc, speedtest, false, restartRemaining);
         }
         else if (err == Error::TIMED_OUT 
                 || err == Error::OUT_OF_SYNC 
@@ -1575,7 +1658,7 @@ public:
             (*restartRemaining)--;
 
             transport.broadcast(MessageType::PROTOCOL_RESTART, ZeroMQCoordinatorTransport::ids);
-            return hostHelper(transport, enc, true, restartRemaining);
+            return hostHelper(transport, enc, speedtest, true, restartRemaining);
         }
         else {
             LOG(INFO) << "Coordinator got impossible error: " << showError(err);
@@ -1587,10 +1670,15 @@ public:
         return Error::TOO_MANY_RESTART;
     }
 
-    /** Host the RSA MPC ceremony. */
+    /** Host the RSA MPC ceremony
+     * @param transport communication helper
+     * @param restartRemaining number of remaining restarts
+     * @return empty Unit on success, error on failure
+     */
     expected<Unit> host(
         ZeroMQCoordinatorTransport& transport,
-        int *restartRemaining
+        int *restartRemaining,
+        bool speedtest
     ) {
         // After running the throughput test,
         // now we have enough parties to start the protocol
@@ -1601,17 +1689,22 @@ public:
         auto e = lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>(config);
         bool needRegistration = true;
 
-        return hostHelper(transport, e, needRegistration, restartRemaining);
+        return hostHelper(transport, e, speedtest, needRegistration, restartRemaining);
     }
 
+    /** Registration helper
+     * @param transport communication helper
+     * @param enc encryption helper
+     */
     expected<Unit> registerAndHostRSACeremony(
         ZeroMQCoordinatorTransport& transport, 
         lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>& enc,
         int *restartRemainging,
+        bool speedtest,
         bool registration = true
     ) {
         if (registration) {
-            auto result = hostRegistration(transport);
+            auto result = hostRegistration(transport, speedtest);
             if (hasError(result)) { return getError(result); }
         }
 
@@ -1882,8 +1975,8 @@ public:
                 // sanity check
                 for(size_t i = 0; i < pq.first.size(); ++i)
                 {
-                    assert(boost::multiprecision::miller_rabin_test(MPInt(pq.first[i].get_mpz_t()), 4));
-                    assert(boost::multiprecision::miller_rabin_test(MPInt(pq.second[i].get_mpz_t()), 4));
+                    assert(mpz_probab_prime_p(pq.first[i].get_mpz_t(), 4));
+                    assert(mpz_probab_prime_p(pq.second[i].get_mpz_t(), 4));
                 }
 
                 LOG(INFO) << "Prime factorization of the candidates are: ";
@@ -1927,6 +2020,10 @@ public:
         //transport.myTimers.end(1,"RSA Ceremony",transport.communicationCost);
     }
 
+    /** Fills public data with values computed from partie's shares
+     * @param id party's unique id
+     * @param pdata_p party's public data to fill
+     */
     void updatePublicData(const SocketId& id, PublicData *pdata_p) {
 
         PublicData& pdata = *pdata_p;
@@ -2174,12 +2271,20 @@ public:
                 zbounds.emplace_back(tau * tau * config.numParties() * mpz_class(2)^mpz_class(config.lambda()));
             }
 
-            mpz_class rbound = 2*config.lambda()*2*(config.sigma()*config.numParties()*mpz_class(2)^mpz_class(64*9)*Degree);                        
+            /** verifying the ranging from [±R], where R = (2 ^ λ) * (2 * σ * P * N^1.5 * n) */
+            mpz_class pown = config.numParties();
+            ligero::lattice::mpz_pow_d(pown.get_mpz_t(), pown.get_mpz_t(), 1.5);
+
+            mpz_class rbound = mpz_class(1) << config.lambda();
+            rbound *= mpz_class(2) * mpz_class(config.sigma()) * mpz_class(pown) *
+                    mpz_class(Degree) *
+                    mpz_class(nfl::poly_p<T, Degree, NbPrimesP>::moduli_product());
 
             size_t size = alphasCAN.size() + alphasPS.size() + alphasGCD.size();
             std::vector<mpz_class> rbounds(size, rbound);
 
-            auto params = {cans, cans, alphasCAN, {mpz_class(2)^mpz_class(1234)}, zbounds, rbounds};
+            // auto params = {cans, cans, alphasCAN, {mpz_class(2)^mpz_class(1234)}, zbounds, rbounds};
+            auto params = {cans, cans, alphasCAN, {mpz_class(2)^mpz_class(1234)}, rbounds};
 
             std::vector<mpz_class> Cs;
             for (auto param : params) {
@@ -2203,6 +2308,7 @@ public:
         }
     }
 
+    /** Clears public data between protocol restarts */
     void clearPublicData() {
         axGCD.clear();
         byGCD.clear();
@@ -2232,6 +2338,7 @@ public:
         index_candidates.clear();
     }
 
+    /** Dumps protocol randomness to the file on protocol record */
     void saveProtocolRecord() {
         LOG(INFO) << "Saving protocol recording into record.data file for " << record_protocol_shares.size() << " parties";
         boost::filesystem::ofstream record_ofs;
@@ -2244,6 +2351,7 @@ public:
         record_ofs.close();
     }
 
+    /** Loads recorded randomness from the file on protocol replay */
     void loadProtocolRecord() {
         LOG(INFO) << "Loading protocol recording from record.data file" << record_protocol_shares.size() << " parties";
         boost::filesystem::ifstream record_ifs;

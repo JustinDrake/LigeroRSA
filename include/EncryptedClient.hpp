@@ -11,8 +11,13 @@
 #include "FiniteFields.hpp"
 #include "Hash.hpp"
 #include "ZkArgument.hpp"
+ 
+#include "eccrypto.h"
+#include "osrng.h"
+#include "oids.h"
 
 extern RegularInteger p_zk;
+using namespace CryptoPP;
 
 namespace ligero {
 
@@ -575,7 +580,7 @@ class EncryptedClient {
             return _config;
         }
 
-        /* ========== ========== */
+        /** Clear proofs data between protocol restarts */
         void clearProofs() {
             {
                 Q tmp = Q{};
@@ -597,6 +602,13 @@ class EncryptedClient {
             sievingFlags().clear();
         }
 
+        /** Protocol start helper
+         * @param transport communication helper
+         * @param needRegistration is true when registration needed
+         * @param localUri coordinator's IP address
+         * @param chi protocol parameter
+         * @param prover zero-knowledge prover
+         */
         expected<Unit> startHelper(ZeroMQClientTransport& transport, 
             bool needRegistration,
             const std::string& localUri,
@@ -610,6 +622,8 @@ class EncryptedClient {
                     exit(EXIT_FAILURE);
                 }
                 config() = getResult(conf);
+                // set coordinators public key
+                transport.coordinatorPublicKey = config().publicKey();
             }
 
             auto enc = lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>(config());
@@ -878,9 +892,10 @@ class EncryptedClient {
             return 0;
         }
 
-        /* ========== public data, will eventually be removed ========== */
-        /*
-         * Gathers and returns all public data.
+        /** Gathers and updates public and secrete data passed as params
+         * @param d public data to update
+         * @param s sigma protocol public data to update
+         * @param e secret data to update
          */
         void gatherData(PublicData &d, SigmaProtocolPublicData &s, SecretData &e) {
 
@@ -1511,22 +1526,32 @@ class EncryptedClient {
             std::transform(exp_z.begin(), exp_z.end(), back_inserter(mpz_z), [](mpz_t in)->mpz_class {return mpz_class(in);});
             std::transform(exp_r.begin(), exp_r.end(), back_inserter(mpz_r), [](mpz_t in)->mpz_class {return mpz_class(in);});
 
-            pickSubVector(vars, mpz_z, indices);
-            pickSubVector(vars, mpz_r, indices);    
+            // pickSubVector(vars, mpz_z, indices);
+            pickSubVector(vars, mpz_r, indices);
+            for (auto& it : vars) { it = mpz_class(0);}
 
             std::vector<mpz_class> zbounds;
 
             for (auto tau : cans) {
+                /** verifying the ranging from [±Z], where Z = τ * N * (2 ^ λ) */
                 zbounds.emplace_back(tau * tau * config().numParties() * mpz_class(2)^mpz_class(config().lambda()));
             }
 
-            mpz_class rbound = 2*config().lambda()*2*(config().sigma()*config().numParties()*mpz_class(2)^mpz_class(64*9)*Degree);                        
+            /** verifying the ranging from [±R], where R = (2 ^ λ) * (2 * σ * P * N^1.5 * n) */
+            mpz_class pown = config().numParties();
+            ligero::lattice::mpz_pow_d(pown.get_mpz_t(), pown.get_mpz_t(), 1.5);
+
+            mpz_class rbound = mpz_class(1) << config().lambda();
+            rbound *= mpz_class(2) * mpz_class(config().sigma()) * mpz_class(pown) *
+                    mpz_class(Degree) *
+                    mpz_class(nfl::poly_p<T, Degree, NbPrimesP>::moduli_product());
 
             size_t size = alphasCAN.size() + alphasPS.size() + alphasGCD.size();
             std::vector<mpz_class> rbounds(size, rbound);
 
-            auto params = {cans, cans, alphasCAN, {mpz_class(2)^mpz_class(1234)}, zbounds, rbounds};
-            
+            // auto params = {cans, cans, alphasCAN, {mpz_class(2)^mpz_class(1234)}, zbounds, rbounds};
+            auto params = {cans, cans, alphasCAN, {mpz_class(2)^mpz_class(1234)}, rbounds};
+
             std::vector<mpz_class> Cs;
 
             e.bitDecompositions.clear();
@@ -1905,7 +1930,7 @@ class EncryptedClient {
                         assert(rem % mpz_class(nfl::params<uint64_t>::P[p]) == 0);
                     }
 
-        		    LOG(INFO) << "Verified round12" ;
+        		    LOG(INFO) << "Verified round12";
                 }
             }
             
@@ -1997,6 +2022,13 @@ class EncryptedClient {
         std::unique_ptr<lattice::LatticeEncryption<T, Degree, NbPrimesP, NbPrimesQ>> _e;
 };
 
+/** Registers party and awaits for configuration from the protocol coordinator
+ * @param transport communication helper
+ * @param ipAddress coordinator's IP address
+ * @param chi protocol configuration parameter
+ * @param prover zero-knowledge prover
+ * @return protocol configuration
+ */
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
 expected<ProtocolConfig<T>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::registerAndAwaitConfiguration(
     ZeroMQClientTransport &transport, std::string ipAddress, nfl::gaussian<uint16_t, T, 2>& chi, zksnark::Prover<FieldT>* prover) {
@@ -2045,7 +2077,7 @@ expected<ProtocolConfig<T>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrim
     roots.ntt_pow_phi();
     std::vector<std::string> earlyWitnessHash;
     
-    for (size_t modulusIdx = 0; modulusIdx<9; modulusIdx++) {
+    for (size_t modulusIdx = 0; modulusIdx < NbPrimesP; modulusIdx++) {
         // Roots of Unity
         prover->_publicData.modulusIdx = modulusIdx;
         prover->_publicData.roots.assign(roots.poly_obj().data()+prover->_publicData.modulusIdx*(size_t)roots.degree,roots.poly_obj().data()+(prover->_publicData.modulusIdx+1)*(size_t)roots.degree);
@@ -2079,7 +2111,8 @@ expected<ProtocolConfig<T>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrim
                 earlyWitnessHash,
                 math::computeHash(ai()),
                 math::computeHash(jacobiSeedShares()),
-                math::computeHash(jacobiAndGCDSeedShares())
+                math::computeHash(jacobiAndGCDSeedShares()),
+                transport.publicKey
                 ));
 
     auto success = transport.awaitReply<ProtocolConfig<T>> (MessageType::PROTOCOL_CONFIG);
@@ -2088,9 +2121,10 @@ expected<ProtocolConfig<T>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrim
     return getResult(success);
 }
 
-/*
- * Generate key pair in a distributed way.
- * return a public key (a, b) and a private key si
+/** Generate key pair in a distributed way.
+ * @param trans communication helper
+ * @param chi protocol parameter
+ * @return a key pair on success and error otherwise
  */
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
 expected<lattice::key_pair<T, Degree, NbPrimesQ>> EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::generateKeyPair(ZeroMQClientTransport& trans, nfl::gaussian<uint16_t, T, 2>& chi) {
@@ -2132,6 +2166,14 @@ expected<lattice::key_pair<T, Degree, NbPrimesQ>> EncryptedClient<FieldT, T, Deg
     return std::make_pair(std::make_pair(A(), b()), si());
 }
 
+/** Helper function to prune and reorder party's shares.
+ * @param as shares
+ * @param bs shares
+ * @param flags used to prune as and bs
+ * @param numAlphas number of alpha's in the buckets
+ * @param bucketSize array of bucket sizes
+ * @return a matrix with valid shares only
+ */
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
 std::vector<std::vector<mpz_class>>
                                  EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::pruneAndReorderShares(
@@ -2170,6 +2212,14 @@ std::vector<size_t> bucketSize) {
 }
 
 
+/** Runs pre-sieving rounds of the protocol
+ * @param e encryption helper
+ * @param transport communication helper
+ * @param publicKey used for encryption
+ * @param secretKey used for partial decryption
+ * @param special flag for a special party
+ * @param config protocol configuration
+ */
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
 expected<std::tuple<
 std::vector<mpz_class>, // xcan
@@ -2335,8 +2385,6 @@ std::vector<mpz_class>, // xcan
         }
     }
 
-
-
     // Pi sends Enc(xi) to coordinator. Coordinator aggregates all encryptions and returns Enc(\sum x_i) = Enc(x)
     DBG("Participant (" << transport.getSocketId() << ") sending `Enc(xi)` shares");
 
@@ -2467,6 +2515,17 @@ std::vector<mpz_class>, // xcan
     return std::make_tuple(xcan, ycan, zcan, xgcd, ygcd, zgcd, prime_shares);
 }
 
+/**
+ * Generates modulus candidates.
+ * @param transport
+ * @param xcan the part of x array from the triples dedicated to the candidate generation
+ * @param ycan the part of x array from the triples dedicated to the candidate generation
+ * @param zcan the part of x array from the triples dedicated to the candidate generation
+ * @param both_shares candidate shares from which we derive both p_i and q_i
+ * @param special flag for a special party
+ * @param config protocol configuration
+ * @return a tuple of three arrays: candidates, p_shares, q_shares
+ */
 template <typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
 expected<std::tuple<std::vector<mpz_class>, std::vector<mpz_class>, std::vector<mpz_class>>>
 EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGeneration(
@@ -2594,7 +2653,14 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performModulusGenerati
 }
 
 
-/** Runs the client protocol for performing the first of the biprimality tests. */
+/** Runs Jacobi biprimality test to prune candidates
+ * @param transport communication helper
+ * @param candidates array is a multiplication of sum(p_i) * sum(q_i) where i runs for all parties
+ * @param p_shares party's private array of p_shares
+ * @param q_shares party's private array of q_shares
+ * @param special flag for a special party
+ * @return 0 and success or error otherwise
+ */
 template<typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
 expected<int>
 EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performJacobiTest(
@@ -2615,13 +2681,11 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performJacobiTest(
         LOG(ERROR) << "Kill/Restart received (performJacobiTest, gammaSeed";
         return getError(maybe_gammaSeed);
     }
-    auto gammaSeed = MPInt(getResult(maybe_gammaSeed).get_mpz_t());
+    mpz_class gammaSeed = getResult(maybe_gammaSeed);
     // We find a set of valid gamma values by their jacobi symbol...
     std::vector<mpz_class> gammaValues(candidates.size());
-
     DBG("gammaSeed = " << gammaSeed);
-    std::vector<mpz_class> engine = math::generateRandomVector(getResult(maybe_gammaSeed),
-                                    kJacobiNumberOfRandomValues, 2048);
+    std::vector<mpz_class> engine = math::generateRandomVector(gammaSeed, kJacobiNumberOfRandomValues, 2048);
     size_t engineCount = 0;
 
     {
@@ -2710,7 +2774,18 @@ EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performJacobiTest(
 }
 
 
-/** Runs the client protocol for performing the second of the biprimality tests. */
+/** Runs GCD and Jacobi biprimality tests to prune candidates
+ * @param transport communication helper
+ * @param candidates array is a multiplication of sum(p_i) * sum(q_i) where i runs for all parties
+ * @param p_shares party's private array of p_shares
+ * @param q_shares party's private array of q_shares
+ * @param x the part of x array from the triples dedicated to the gcd rounds
+ * @param y the part of y array from the triples dedicated to the gcd rounds
+ * @param z the part of z array from the triples dedicated to the gcd rounds
+ * @param special flag for a special party
+ * @param config protocol configuration
+ * @return 0 on success and error otherwise
+ */
 template<typename FieldT, typename T, size_t Degree, size_t NbPrimesP, size_t NbPrimesQ>
 expected<int>
 EncryptedClient<FieldT, T, Degree, NbPrimesP, NbPrimesQ>::performGCDandJacobiTest(

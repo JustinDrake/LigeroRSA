@@ -59,12 +59,47 @@ constexpr int nbIterations = 3;
 constexpr int nbVarsStitched = 4;
 constexpr int nbBlocksPerVar = degree / l;
 
+void compromise(uint64_t& u) {
+  int r = rand() % 10;
+
+  if (r == 3) {
+    u += ligero::math::generateRandomValue(mpz_class(std::random_device()()))
+             .get_ui();
+  }
+};
+
+void compromise(std::vector<uint64_t>& u) {
+  int r = rand() % 10;
+
+  if (r == 3) {
+    if (u.size() != 0) {
+      size_t pos =
+          ligero::math::generateRandomValue(mpz_class(std::random_device()()))
+              .get_ui() %
+          u.size();
+
+      u[pos] +=
+          ligero::math::generateRandomValue(mpz_class(std::random_device()()))
+              .get_ui();
+    }
+  }
+};
+
+void compromise(mpz_class& u) {
+  int r = rand() % 10;
+
+  if (r == 3) {
+    u += ligero::math::generateRandomValue(mpz_class(std::random_device()()));
+  }
+};
+
 /** This function handles the ceremony itself, whether it is performed with
  * passive or active security.
  * @param transport transport object to communicate with coordinator
  * @param socketId unique identifier for this party
  * @param localIpAddr local ip address for this party
- * @param passive boolean flag indicating whether to generate a ZK proof or not
+ * @param passive boolean flag indicating whether to generate a ZK proof or
+ * not
  * @return Unit if successful
  */
 expected<Unit> participateHelper(ZeroMQClientTransport& transport,
@@ -174,7 +209,7 @@ expected<Unit> participateHelper(ZeroMQClientTransport& transport,
     SecretData sdata;
 
     client->gatherData(pdata, spdata, sdata);
-    transport.send(MessageType::GATHER_SIGMA_DATA, spdata, false);
+    transport.send(MessageType::GATHER_SIGMA_DATA, spdata);
 
     /** Set all parameters for active and passive protocols */
 
@@ -193,6 +228,108 @@ expected<Unit> participateHelper(ZeroMQClientTransport& transport,
     pdata.modulusIdx = 0;
     pdata.roots.clear();
     pdata.ptNumberEvaluation = ptNumberEvaluation;
+
+    /** Compromise some of the public data **/
+    compromise(pdata.ps);
+    compromise(pdata.A);
+    compromise(pdata.bi);
+    compromise(pdata.b);
+    compromise(pdata.ci_1);
+    compromise(pdata.ci_2);
+    compromise(pdata.ci_1_prime);
+    compromise(pdata.ci_2_prime);
+    compromise(pdata.c_1);
+    compromise(pdata.c_2);
+    compromise(pdata.di);
+    compromise(pdata.c_1_prime);
+    compromise(pdata.c_2_prime);
+    compromise(pdata.ax_shares);
+    compromise(pdata.by_shares);
+    compromise(pdata.fixedCoefs);
+    compromise(pdata.coefsCAN);
+    compromise(pdata.cans);
+    compromise(pdata.prodcans);
+    compromise(pdata.ax);
+    compromise(pdata.by);
+    compromise(pdata.axby);
+    compromise(pdata.ax_shares_GCD);
+    compromise(pdata.by_shares_GCD);
+    compromise(pdata.coefsGCD);
+    compromise(pdata.gcds);
+    compromise(pdata.prodgcds);
+    compromise(pdata.axGCD);
+    compromise(pdata.byGCD);
+    compromise(pdata.axbyGCD);
+    compromise(pdata.finalModuli_GCD);
+    compromise(pdata.roots);
+    compromise(pdata.sigmaeGCD);
+    compromise(pdata.sigmazGCD);
+    compromise(pdata.gammaSeed);
+    compromise(pdata.log2Ds);
+    compromise(pdata.Cs);
+    compromise(pdata.Ds);
+
+    /** Compromise some of the sigma public data **/
+    compromise(spdata.sigmaeGCD);
+    compromise(spdata.sigmazGCD);
+    compromise(spdata.sigmaaGCD);
+    compromise(spdata.sigmagGCD);
+
+    /** Compromise some of the secret data **/
+    compromise(sdata.siP);
+    compromise(sdata.eiP);
+    compromise(sdata.q_r3);
+    compromise(sdata.xi);
+    compromise(sdata.ux);
+    compromise(sdata.vx);
+    compromise(sdata.wx);
+    compromise(sdata.vxP);
+    compromise(sdata.wxP);
+    compromise(sdata.q_r4_1);
+    compromise(sdata.q_r4_2);
+    compromise(sdata.zp);
+    compromise(sdata.yi);
+    compromise(sdata.zi);
+    compromise(sdata.uz);
+    compromise(sdata.vz);
+    compromise(sdata.vzP);
+    compromise(sdata.wz);
+    compromise(sdata.wzP);
+    compromise(sdata.q_r5_1);
+    compromise(sdata.q_r5_2);
+    compromise(sdata.rNoise);
+    compromise(sdata.q_r6);
+    compromise(sdata.x_sharesCAN);
+    compromise(sdata.x_sharesPS);
+    compromise(sdata.y_sharesCAN);
+    compromise(sdata.y_sharesPS);
+    compromise(sdata.z_sharesCAN);
+    compromise(sdata.q_p_prod_r7);
+    compromise(sdata.q_p_r7);
+    compromise(sdata.q_q_prod_r7);
+    compromise(sdata.q_q_r7);
+    compromise(sdata.q_r8);
+    compromise(sdata.x_sharesGCD);
+    compromise(sdata.y_sharesGCD);
+    compromise(sdata.z_sharesGCD);
+    compromise(sdata.q_p_prod_r11);
+    compromise(sdata.q_q_prod_r11);
+    compromise(sdata.q_pq_r11);
+    compromise(sdata.r_CRTs);
+    compromise(sdata.q_r_r11);
+    compromise(sdata.ss_GCD);
+    compromise(sdata.q_r12);
+    compromise(sdata.alpha);
+    compromise(sdata.W1);
+    compromise(sdata.W2);
+    compromise(sdata.XplusCs);
+    compromise(sdata.XplusDs);
+    compromise(sdata.Xs);
+    compromise(sdata.sigmarGCD);
+    compromise(sdata.sigmaxGCD);
+    compromise(sdata.sigmaqGCD);
+    compromise(sdata.exp_q);
+    compromise(sdata.expqGCD);
 
     std::string hashedPublicData =
         hash::hashPublicData(stringGenerator, pdata, spdata);
@@ -403,7 +540,7 @@ int main(int argc, char** argv) {
   }
 
   /** Configure easylogging */
-  configureEasyLogging("party_full_protocol");
+  configureEasyLogging("malicious_party");
 
   auto result = participate(ipAddr, localIpAddr, passive, speedtest);
   if (hasError(result)) {

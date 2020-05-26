@@ -23,24 +23,25 @@
 #include <variant>
 #include <zmq.hpp>
 
+#include <cryptopp/files.h>
+#include "cryptlib.h"
+#include "eccrypto.h"
+#include "ecp.h"
+#include "hex.h"
+#include "osrng.h"
+#include "oids.h"
+
 #include "easylogging++.h"
 #include "nfl.hpp"
 #include <sstream>
 
-#define NDEBUG
-
 using namespace std::chrono_literals;
+using namespace CryptoPP;
 
 #define MAX_LINES_DISPLAY 10
 
 typedef uint64_t RegularInteger;
 typedef unsigned __int128 WideInteger;
-
-/** Enum class for zero knowledge linear constraint **/
-enum class LinearConstraintFlag : uint64_t {
-    Regular,      /**< Regular constraint */
-    SigmaProtocol /**< Sigma protocol     */
-};
 
 /** Enum class for zero knowledge linear constraint **/
 enum class LinearCombinationsStitching : uint64_t {
@@ -66,6 +67,7 @@ template <typename T, typename U = Error>
 using expected = std::variant<T, U>;
 using Unit = std::monostate;
 
+/** Helper to conver Error to string error message */
 std::string showError(Error e) {
     switch (e) {
         case Error::TIMED_OUT:
@@ -91,16 +93,19 @@ std::string showError(Error e) {
     return std::string("Unknown error: ") + std::to_string(size_t(e));
 }
 
+/** Check whether the result has error or a valid value */
 template <typename T>
 inline bool hasError(const expected<T>& result) {
     return std::holds_alternative<Error>(result);
 }
 
+/** Get error object from the result */
 template <typename T>
 inline Error getError(const expected<T>& result) {
     return std::get<Error>(result);
 }
 
+/** Get result from variable */
 template <typename T>
 inline auto getResult(const expected<T>& result) 
     -> decltype(std::get<T>(result)) 
@@ -314,6 +319,7 @@ public:
         else DBG(msg);
     }
 
+    /** Simple helper to reset all timers */
     void reset() {
         LOG(INFO) << "Reset all timers as well";
         timer_start.clear();
@@ -331,6 +337,11 @@ public:
                 std::vector<uint64_t> sigmaaGCD;
                 std::vector<uint64_t> sigmagGCD;
 
+                // x, y, and z shares for failed candidates
+                std::vector<uint64_t> xi;
+                std::vector<uint64_t> yi;
+                std::vector<uint64_t> zi;
+
             private:
                 friend class boost::serialization::access;
 
@@ -342,6 +353,10 @@ public:
                     ar & sigmazGCD;
                     ar & sigmaaGCD;
                     ar & sigmagGCD;
+
+                    ar & xi;
+                    ar & yi;
+                    ar & zi;
                 }
         };
 
@@ -681,10 +696,13 @@ public:
 
 /** Misc Helper Functions */
 
+/** Compute positive remainder for mpz_class type values */
 mpz_class positiveRemainder(mpz_class & a, mpz_class & b) {
         return ((a % b + b) % b);
 };
 
+/** Extract data from the vector of mpz_class for a given set of indexes
+ * into a vector of uint64_t values within a given ring defined by NbPrimesQ parameter */
 template <size_t NbPrimesQ>
 void dataExtractSubVector(std::vector<uint64_t> &assignee, std::vector<mpz_class> &target, std::vector<size_t> &idxs) {
     assignee.resize(target.size()*NbPrimesQ);
@@ -699,6 +717,8 @@ void dataExtractSubVector(std::vector<uint64_t> &assignee, std::vector<mpz_class
 };
 
 
+/** Extract data from the vector of mpz_class values into a vector of 
+ * uint64_t values within a given ring defined by NbPrimesQ parameter */
 void dataExtractVector(std::vector<uint64_t> &assignee, std::vector<mpz_class> &target) {
         assignee.resize(target.size());
         for (size_t idx = 0; idx < target.size(); idx++) {
@@ -706,6 +726,9 @@ void dataExtractVector(std::vector<uint64_t> &assignee, std::vector<mpz_class> &
         }
     };
 
+
+/** Extract data from the vector of mpz_class values in CRT representation 
+ * into a vector of uint64_t values within a given ring defined by NbPrimesQ parameter */
 template <size_t NbPrimesQ>
 void dataExtractVectorCRT(std::vector<uint64_t> &assignee, std::vector<mpz_class> &target) {
     assignee.resize(target.size()* NbPrimesQ);
@@ -719,6 +742,7 @@ void dataExtractVectorCRT(std::vector<uint64_t> &assignee, std::vector<mpz_class
     }
 };
 
+/** Extract data from the value in Q into a vector of uint64_t values */
 template <typename T, size_t Degree, size_t NbPrimesQ>
 void dataExtractQ(std::vector<uint64_t> &assignee, nfl::poly_p<T, Degree, NbPrimesQ> & target) {
     assignee.assign(
@@ -726,6 +750,7 @@ void dataExtractQ(std::vector<uint64_t> &assignee, nfl::poly_p<T, Degree, NbPrim
             target.poly_obj().data() + (size_t)target.nmoduli * (size_t)target.degree);
 };
 
+/** Serialization helper */
 template<typename T>
 std::string serialize(T obj) {
     std::stringstream ss;
@@ -736,6 +761,7 @@ std::string serialize(T obj) {
     return (ss.str());
 };
 
+/** Configure logging levels */
 void configureEasyLogging(const char* fileChar = "default") {
     std::string file(fileChar);
 
@@ -757,24 +783,17 @@ void sendToFile(T& data, std::string filename) {
     std::stringstream ss;
     std::ofstream fileHandler(filename.c_str(), std::ios::binary);
 
-    boost::archive::binary_oarchive oa(ss);
+    boost::archive::binary_oarchive oa(fileHandler);
     oa << data;
-
-    std::string msg = ss.str();
-    fileHandler << msg;
-    // Destructors will close both file handler and boost serializer
-    system((std::string("touch ") + filename + std::string("_complete")).c_str());
 }
 
 /** Helper function for serializing data in binary format and save to file
  * @param data string
  * @param filename File to save
  */
-template <>
-void sendToFile(const std::string& data, std::string filename) {
+void sendToFileString(const std::string& data, std::string filename) {
     std::ofstream fileHandler(filename.c_str(), std::ios::binary);
     fileHandler << data;
-    system((std::string("touch ") + filename + std::string("_complete")).c_str());
 }
 
 /** Helper function for saving data to file
@@ -796,7 +815,9 @@ void sendToFileRaw(zmq::message_t* msg, std::string filename) {
  */
 template <typename T>
 void fetchFromFile(T& data, std::string filename) {
-    std::ifstream fileHandler(filename.c_str(), std::ios::binary);
+    std::ifstream fileHandler;
+    fileHandler.open(filename.c_str(), std::ios::in | std::ios::binary);
+
     boost::archive::binary_iarchive ia(fileHandler);
     ia >> data;
 
@@ -932,9 +953,9 @@ namespace ligero {
             : _rows(rows), _cols(cols), _chiStd(chiStd), _q(q), _packingFactor(packingFactor), _numParties(numParties), initialized(true) {};
 
         ProtocolConfig(size_t numParties, size_t numPrimesP, size_t numPrimesQ, size_t degree,
-                       size_t sigma, size_t lambda, size_t tauLimit, size_t pbs, ProtocolMode protocolMode)
+                       size_t sigma, size_t lambda, size_t tauLimit, size_t pbs, ProtocolMode protocolMode, ECDSA<ECP, SHA256>::PublicKey publicKey)
             : _numParties(numParties), _nb_primes_p(numPrimesP), _nb_primes_q(numPrimesQ),
-              _degree(degree), _sigma(sigma), _lambda(lambda), _tau_bit_limit(tauLimit), _pbs(pbs), _protocolMode(protocolMode), initialized(true)
+              _degree(degree), _sigma(sigma), _lambda(lambda), _tau_bit_limit(tauLimit), _pbs(pbs), _protocolMode(protocolMode), _publicKey(publicKey), initialized(true)
             { }
 
         int rows() const { return THROW_IF_NOT_INITIALIZED(_rows); }
@@ -954,6 +975,7 @@ namespace ligero {
         size_t tauLimitBit() const { return _tau_bit_limit; }
         size_t pbs() const { return _pbs; }
         ProtocolMode protocolMode() const { return _protocolMode; }
+        ECDSA<ECP, SHA256>::PublicKey publicKey() const { return _publicKey; }
 
     private:
         friend class boost::serialization::access;
@@ -978,9 +1000,19 @@ namespace ligero {
 
             ar & _protocolMode;
 
+            if (Archive::is_saving::value) {
+                StringSink ss(_publicKeyString);
+                _publicKey.Save(ss);
+                ar & _publicKeyString;
+            } else {
+                ar & _publicKeyString;
+                StringSource ss(_publicKeyString, true);
+                _publicKey.Load(ss);
+            }
             initialized = true;
         }
 
+        // TODO: deprecate unused parameter in RingLWE
         int _rows;
         int _cols;
         double _chiStd;
@@ -997,8 +1029,11 @@ namespace ligero {
         size_t _tau_bit_limit;
         size_t _pbs;
         ProtocolMode _protocolMode;
+        std::string _publicKeyString;
+        ECDSA<ECP, SHA256>::PublicKey _publicKey;
     };
 
+    // All the data each party commits on registration
     class PartyCommitment {
     public:
 
@@ -1009,9 +1044,10 @@ namespace ligero {
                 std::vector<std::string> earlyW,
                 std::string ai,
                 std::string seed1,
-                std::string seed2
+                std::string seed2,
+                ECDSA<ECP, SHA256>::PublicKey publicKey
                 )
-            : _ipAddress(ipAddress), _earlyW(earlyW), _aiHash(ai), _seed1hash(seed1), _seed2hash(seed2)
+            : _ipAddress(ipAddress), _earlyW(earlyW), _aiHash(ai), _seed1hash(seed1), _seed2hash(seed2), _publicKey(publicKey)
             { }
 
         std::string ipAddress() const { return _ipAddress; }
@@ -1019,6 +1055,8 @@ namespace ligero {
         std::string aiHash() const { return _aiHash; }
         std::string seed1hash() const { return _seed1hash; }
         std::string seed2hash() const { return _seed2hash; }
+        std::string publicKeyString() const { return _publicKeyString; }
+        ECDSA<ECP, SHA256>::PublicKey publicKey() const { return _publicKey; }
 
     private:
 
@@ -1031,6 +1069,16 @@ namespace ligero {
             ar & _aiHash;
             ar & _seed1hash;
             ar & _seed2hash;
+
+            if (Archive::is_saving::value) {
+                StringSink ss(_publicKeyString);
+                _publicKey.Save(ss);
+                ar & _publicKeyString;
+            } else {
+                ar & _publicKeyString;
+                StringSource ss(_publicKeyString, true);
+                _publicKey.Load(ss);
+            }
         }
 
         std::string                 _ipAddress;
@@ -1038,6 +1086,8 @@ namespace ligero {
         std::string                 _aiHash;
         std::string                 _seed1hash;
         std::string                 _seed2hash;
+        std::string                 _publicKeyString;
+        ECDSA<ECP, SHA256>::PublicKey _publicKey;
     };
 
     // Enumerating message types
@@ -1125,7 +1175,8 @@ namespace ligero {
         RECYCLE_VERIFIER
     };
 
-std::vector<std::string> msgs = {
+    // Stringified rounds names
+    std::vector<std::string> msgs = {
         "ABORT_PROTOCOL_VERSION_MISMATCH",
         "ID_PARTY",
         "REPLAY_PROTOCOL_SHARES",
@@ -1236,6 +1287,7 @@ std::vector<std::string> msgs = {
     std::array<T, N> operator* (const std::array<T, N>& a, const std::array<T, N>& b) {
         std::array<T, N> result {};
 
+        // TODO: If a[i] is an EIgen::Matrix type, we need cwiseProduct here
         for (size_t i = 0; i < N; ++i)
             result[i] = a[i] * b[i];
 
@@ -1384,7 +1436,7 @@ std::vector<std::string> msgs = {
             DBG("----------------------------------------------------------");
         }
 
-        constexpr size_t upperBoundBits = 180ull;
+        constexpr size_t upperBoundBits = 2080ull;
 
         std::pair<mpz_class, uint64_t> roundToUpperPowerTwoLarge(mpz_class n) {
             size_t log2d = upperBoundBits;
@@ -1557,26 +1609,6 @@ namespace boost {
                 std::string s;
                 ar & s;
                 id = boost::lexical_cast<boost::uuids::uuid>(s);
-            }
-        }
-
-        /** Implements serialization and deserialization for an MPInt type to
-         *  an arbitrary Boost Archive.
-         */
-        template <class Archive>
-        void serialize(Archive& ar, ligero::MPInt& x, const unsigned int version)
-        {
-            if (Archive::is_saving::value)
-            {
-                std::string s = mpz_get_str(nullptr, 32, x.backend().data());
-                ar & s;
-            }
-            else
-            {
-                std::string s;
-
-                ar & s;
-                mpz_set_str(x.backend().data(), s.c_str(), 32);
             }
         }
 

@@ -466,7 +466,7 @@ fixed_bucket_n_primes (int productBitThreshold, size_t degree, int tauLimitBit)
 
     for (int i = 0; i < number_of_buckets; ++i) {
         mpz_class r = grc.get_z_bits(tauLimitBit);
-        while (!boost::multiprecision::miller_rabin_test(MPInt(r.get_mpz_t()), 64) || mpz_sizeinbase(r.get_mpz_t(),2) < tauLimitBit) {
+        while (!mpz_probab_prime_p(r.get_mpz_t(), 64) || mpz_sizeinbase(r.get_mpz_t(),2) < tauLimitBit) {
             r = grc.get_z_bits(tauLimitBit);
         }
         alphas[i] = r;
