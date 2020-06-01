@@ -3,7 +3,7 @@ Distributed RSA Modulus Generation
 
 ## Prerequisites
 1. If you are on Mac OS X or on Windows please install Docker
-2. If you are on Ubuntu 14.04 install dependencies and setup environment:
+2. If you are on Ubuntu 18.04 install dependencies and setup environment:
 ```bash
 sudo apt-get install build-essential pkg-config libgmp-dev wget git libmpfr-dev libsodium-dev gcc-8 g++-8 libzmq3-dev
 sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 700 --slave /usr/bin/g++ g++ /usr/bin/g++-7
@@ -32,7 +32,7 @@ $ git submodule update --init --recursive
 
 #### Build and Run Tests with CMake 
 
-For Ubuntu 14.04 users:
+For Ubuntu 18.04 users:
 ```bash
 $ cd aws_scripts && ./native_build.sh
 ```
@@ -44,7 +44,7 @@ $ ./scripts/build-binary-docker.sh
 
 ## Running
 
-### Active Protocol with Ubuntu 14.04
+### Active Protocol with Ubuntu 18.04
 Lets run an active computation for 10 parties: First start the coordinator.
 
 ```bash
